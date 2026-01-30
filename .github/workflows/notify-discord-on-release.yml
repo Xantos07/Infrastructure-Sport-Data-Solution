@@ -1,0 +1,40 @@
+name: Notification Discord on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  send-discord-notification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: “Release Notification Discord”
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          URL="${{ github.event.release.html_url }}"
+          REPO="${{ github.repository }}"
+          COMMITTER="${{ github.actor }}"
+          
+          echo "DEBUG - TAG: $TAG"
+          echo "DEBUG - URL: $URL"
+          echo "DEBUG - REPO: $REPO"
+          echo "DEBUG - COMMITTER: $COMMITTER"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "embeds": [{
+              "title": ":tada: Nouvelle release : ${TAG}",
+              "description": "**Repository:** ${REPO}\n\n **Auteur: **${COMMITTER} \n\n[Voir la release](${URL})",
+              "color": 15844367,
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+            }]
+          }
+          EOF
+          )
+          
+          curl -H "Content-Type: application/json" \
+               -d "${PAYLOAD}" \
+               "${WEBHOOK_URL}"
+      

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     @property
     def xlsx_sport_full_path(self) -> Path:
         """Retourne le chemin complet du fichier XLSX Clean."""
-        return self.output_dir / self.sport_xlsx_filename
+        return self.input_dir / self.sport_xlsx_filename
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),

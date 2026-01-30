@@ -1,0 +1,57 @@
+name: Notification Discord on Push
+
+on:
+  # Uniquement sur les branches de travail (pas main/development/release)
+  push:
+    branches:
+      - 'feature/**'
+      - 'bugfix/**'
+      - 'hotfix/**'
+      - 'test/**'
+      - 'chore/**'
+      - 'docs/**'
+      - 'refactor/**'
+      - 'dev/**'
+
+jobs:
+  send-discord-notification:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Discord Notification on Push"
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+        run: |
+          BRANCH_NAME="${{ github.ref_name }}"
+          COMMITTER="${{ github.actor }}"
+          COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+          COMMIT_URL="${{ github.event.head_commit.url }}"
+          COMMIT_ID="${{ github.event.head_commit.id }}"
+          
+          # Extraire le titre (1ère ligne) et la description (reste)
+          COMMIT_TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1)
+          COMMIT_BODY=$(echo "$COMMIT_MESSAGE" | tail -n +2 | sed '/^$/d')
+          
+          # Construire la description pour Discord
+          DESCRIPTION="**Commit:** \`${COMMIT_TITLE}\`"
+          if [ -n "$COMMIT_BODY" ]; then
+            DESCRIPTION="${DESCRIPTION}\n**Description:** ${COMMIT_BODY}"
+          fi
+          DESCRIPTION="${DESCRIPTION}\n**Auteur:** ${COMMITTER}\n**SHA:** \`${COMMIT_ID:0:7}\`\n\n[Voir le commit](${COMMIT_URL})"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "embeds": [{
+              "title": "📝 Push réalisé sur ${BRANCH_NAME}",
+              "description": "${DESCRIPTION}",
+              "color": 3447003,
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+            }]
+          }
+          EOF
+          )
+          
+          curl -H "Content-Type: application/json" \
+               -d "${PAYLOAD}" \
+               "${WEBHOOK_URL}"
