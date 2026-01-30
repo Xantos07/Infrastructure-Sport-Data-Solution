@@ -1,0 +1,17 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "base": {
+      "ref": "development",
+      "sha": "abc123def456"
+    },
+    "head": {
+      "ref": "feature/je-suis-une-feature",
+      "sha": "def789ghi012"
+    },
+    "user": {
+      "login": "Xantos07"
+    },
+    "title": "Ajout d'une nouvelle fonctionnalité"
+  }
+}

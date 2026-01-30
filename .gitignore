@@ -5,3 +5,5 @@
 database.ini
 debezium.json
 *.pdf
+.secrets
+.githooks
