@@ -156,6 +156,8 @@ def generate_ticket(df):
  
     # mettre un pourcentage de X% de personne qui font du sport exterieur OU/ET viennent au travail en vélo/trottinette/marche/running
     # qui forcement sera eligible à la prime sportive et qui vont donc générer un ticket d'activité sportive
+  
+    # faire en tre 5-20 tickets selon random pas de pourcentage
     percentage_sport_only = 20
     percentage_transport_only = 20 
     percentage_both = 20
