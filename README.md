@@ -27,9 +27,7 @@ Lancez tous les services (PostgreSQL, Redpanda, Debezium, pgAdmin) :
 
 ```bash
 docker-compose up -d
-```
-
-## Accès rapides
+```## Accès rapides
 
 - **pgAdmin** : [http://localhost:8081](http://localhost:8081) (login: admin@example.com / admin)
 - **Redpanda Console** : [http://localhost:8080](http://localhost:8080)
@@ -37,8 +35,3 @@ docker-compose up -d
 ## Configuration
 
 Adaptez les fichiers `database.ini` et `debezium.json` selon vos besoins.
-
-
-
-
-
