@@ -7,3 +7,4 @@ debezium.json
 *.pdf
 .secrets
 .githooks
+note.md
