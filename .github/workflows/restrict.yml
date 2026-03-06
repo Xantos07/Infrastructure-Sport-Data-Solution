@@ -20,9 +20,10 @@ jobs:
           AUTHOR="${{ github.event.pull_request.user.login }}"
           
           echo "📋 PR: $HEAD => $BASE par $AUTHOR"
+          HEAD=$(echo "$HEAD" | tr '[:upper:]' '[:lower:]')
           
           # Validation du format de branche (avec exceptions pour development/develop)
-          if ! [[ "$HEAD" =~ ^(feature|bugfix|hotfix|release|dev|test|chore|docs|refactor)/[a-z0-9._-]+$ ]] && [[ "$HEAD" != "development" ]] && [[ "$HEAD" != "develop" ]]; then
+          if ! [[ "$HEAD" =~ ^(feature|bugfix|hotfix|release|dev|test|chore|docs|refactor)/[a-zA-Z0-9._-]+$ ]] && [[ "$HEAD" != "development" ]] && [[ "$HEAD" != "develop" ]]; then
             echo "::error::❌ Nom invalide: $HEAD. Format: type/description (ex: feature/add-auth)"
             exit 1
           fi
