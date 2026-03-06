@@ -9,11 +9,8 @@ class Settings(BaseSettings):
     sheet_activities_id: str = ""
     sheet_employees_id: str = ""
     sheet_sports_id: str = ""
-    mistral_chatbot_limit_tokens: int = 500
-    mistral_chatbot_top_p: float = 0.9
-    mistral_chatbot_temperature: float = 0.7
-    mistral_chatbot_max_messages_history: int = 10
 
+    discord_webhook_url: HttpUrl = ""
     employees_xlsx_filename: str = "DonneesRH.xlsx"
     sport_xlsx_filename: str = "DonneesSportive.xlsx"
 
