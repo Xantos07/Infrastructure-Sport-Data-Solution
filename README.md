@@ -48,3 +48,10 @@ Get-Content debezium.json | docker exec -i debezium-connector bash -c "curl -X P
 ```bash
 docker exec spark-master /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 /opt/spark/work/spark_consumer.py 2>&1 | Select-String -Pattern "Batch|employee_id|sport_type|---" -Context 0,3
 ```
+
+ou
+
+```bash
+docker cp .\spark_consumer.py spark-master:/opt/spark/work/spark_consumer.py
+docker exec spark-master /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 /opt/spark/work/spark_consumer.py
+```
