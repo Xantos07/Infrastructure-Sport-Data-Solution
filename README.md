@@ -35,3 +35,23 @@ docker-compose up -d
 ## Configuration
 
 Adaptez les fichiers `database.ini` et `debezium.json` selon vos besoins.
+
+
+## Debezium
+Sert à capturer les changements dans la base de données PostgreSQL et à les publier dans Kafka (Redpanda).
+```bash
+Get-Content debezium.json | docker exec -i debezium-connector bash -c "curl -X POST -H 'Content-Type: application/json' http://localhost:8083/connectors -d @-"
+```
+
+### streaming avec Spark
+
+```bash
+docker exec spark-master /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 /opt/spark/work/spark_consumer.py 2>&1 | Select-String -Pattern "Batch|employee_id|sport_type|---" -Context 0,3
+```
+
+ou
+
+```bash
+docker cp .\spark_consumer.py spark-master:/opt/spark/work/spark_consumer.py
+docker exec spark-master /opt/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 /opt/spark/work/spark_consumer.py
+```
