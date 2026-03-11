@@ -1,55 +1,68 @@
+"""
+Delta Lake Medallion Reader
+
+Lit et affiche les données de chaque couche du Delta Lake :
+  Bronze : Données brutes CDC (append-only)
+  Silver : Activités nettoyées + Employés de référence
+  Gold   : Éligibilité Prime sportive & Journées bien-être
+
+Usage :
+  docker exec spark-master /opt/spark/bin/spark-submit \
+    --packages io.delta:delta-spark_2.12:3.2.0 \
+    /opt/spark/work/delta_reader.py
+"""
+
 from pyspark.sql import SparkSession
+from delta.tables import DeltaTable
 
-DELTA_PATH = "/opt/spark/delta/activities"
+BRONZE_PATH = "/opt/spark/delta/bronze/activities"
+SILVER_ACTIVITIES_PATH = "/opt/spark/delta/silver/activities"
+SILVER_EMPLOYEES_PATH = "/opt/spark/delta/silver/employees"
+GOLD_ELIGIBILITY_PATH = "/opt/spark/delta/gold/employee_eligibility"
 
 
-def read_delta_activities():
-    """Lit et affiche les données persistées dans Delta Lake"""
-    print("Lecture des données Delta Lake...")
-    print("=" * 60)
+def read_layer(spark, path, name):
+    """Lit et affiche une couche Delta Lake"""
+    print(f"\n{'=' * 60}")
+    print(f"  {name}")
+    print(f"{'=' * 60}")
 
+    try:
+        df = spark.read.format("delta").load(path)
+        print(f"Nombre d'enregistrements : {df.count()}")
+        print("Schéma :")
+        df.printSchema()
+        df.show(20, truncate=False)
+
+        # Historique des versions Delta
+        delta_table = DeltaTable.forPath(spark, path)
+        print(f"--- Historique Delta Lake ({name}) ---")
+        delta_table.history().select("version", "timestamp", "operation", "operationMetrics") \
+            .show(truncate=False)
+
+    except Exception as e:
+        if "is not a Delta table" in str(e) or "doesn't exist" in str(e):
+            print(f"  Aucune donnée trouvée pour {name}.")
+        else:
+            print(f"  Erreur: {e}")
+
+
+def main():
     spark = SparkSession.builder \
-        .appName("Delta Lake Reader") \
+        .appName("Delta Lake Medallion Reader") \
         .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.2.0") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .getOrCreate()
 
     try:
-        # Lecture de la table Delta
-        df = spark.read.format("delta").load(DELTA_PATH)
-
-        print(f"\nNombre total d'activités persistées : {df.count()}")
-        print(f"Schéma des données :")
-        df.printSchema()
-
-        print("\n--- Toutes les activités ---")
-        df.show(truncate=False)
-
-        # Statistiques par type de sport
-        print("\n--- Activités par type de sport ---")
-        df.groupBy("sport_type").count().orderBy("count", ascending=False).show(truncate=False)
-
-        # Statistiques par employé
-        print("\n--- Activités par employé ---")
-        df.groupBy("employee_id").count().orderBy("count", ascending=False).show(truncate=False)
-
-        # Historique des versions Delta Lake
-        from delta.tables import DeltaTable
-        delta_table = DeltaTable.forPath(spark, DELTA_PATH)
-        print("\n--- Historique des versions Delta Lake ---")
-        delta_table.history().show(truncate=False)
-
-    except Exception as e:
-        if "is not a Delta table" in str(e) or "doesn't exist" in str(e):
-            print("Aucune donnée Delta Lake trouvée. Lancez d'abord le spark_consumer.py.")
-        else:
-            print(f"Erreur: {e}")
-            import traceback
-            traceback.print_exc()
+        read_layer(spark, BRONZE_PATH, "BRONZE - Activités brutes CDC")
+        read_layer(spark, SILVER_ACTIVITIES_PATH, "SILVER - Activités nettoyées")
+        read_layer(spark, SILVER_EMPLOYEES_PATH, "SILVER - Employés (référence)")
+        read_layer(spark, GOLD_ELIGIBILITY_PATH, "GOLD - Éligibilité employés")
     finally:
         spark.stop()
 
 
 if __name__ == "__main__":
-    read_delta_activities()
+    main()

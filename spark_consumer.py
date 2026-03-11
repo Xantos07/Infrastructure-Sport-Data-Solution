@@ -1,3 +1,18 @@
+"""
+BRONZE LAYER - Ingestion streaming Kafka → Delta Lake
+
+Consomme les événements CDC (Debezium) depuis Redpanda et les persiste
+dans la couche Bronze du Delta Lake (append-only, données brutes).
+
+Architecture Medallion :
+  Bronze (ce script) → Silver → Gold → Power BI
+
+Usage :
+  docker exec spark-master /opt/spark/bin/spark-submit \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,io.delta:delta-spark_2.12:3.2.0 \
+    /opt/spark/work/spark_consumer.py
+"""
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, from_unixtime, current_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
@@ -14,19 +29,19 @@ activity_schema = StructType([
     StructField("__deleted", StringType())
 ])
 
-# Chemin de stockage Delta Lake
-DELTA_PATH = "/opt/spark/delta/activities"
-CHECKPOINT_PATH = "/opt/spark/checkpoints/activities_delta"
+# Couche Bronze - données brutes append-only
+BRONZE_PATH = "/opt/spark/delta/bronze/activities"
+CHECKPOINT_PATH = "/opt/spark/checkpoints/bronze_activities"
 
 
 def consume_activities():
-    """Consomme les activités sportives depuis Redpanda et les persiste dans Delta Lake"""
-    print("Démarrage du consumer Spark avec Delta Lake...")
-    print("-" * 50)
+    """Consomme les activités depuis Redpanda et les persiste dans la couche Bronze"""
+    print("=" * 60)
+    print("BRONZE LAYER - Ingestion streaming Kafka → Delta Lake")
+    print("=" * 60)
 
-    # Création de la session Spark avec Delta Lake
     spark = SparkSession.builder \
-        .appName("Redpanda Consumer - Delta Lake") \
+        .appName("Bronze - Kafka to Delta Lake") \
         .config("spark.sql.adaptive.enabled", "false") \
         .config("spark.jars.packages",
                 "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -49,34 +64,33 @@ def consume_activities():
             from_json(col("value").cast("string"), activity_schema).alias("data")
         ).select("data.*")
 
-        # Transformation : convertir le timestamp Debezium (microsecondes) en timestamp lisible
-        activities_transformed = activities_df \
+        # Bronze : transformation minimale + métadonnées d'ingestion
+        bronze_df = activities_df \
             .withColumn("start_datetime", from_unixtime(col("start_timestamp") / 1000000)) \
             .withColumn("ingested_at", current_timestamp())
 
-        # Écriture dans Delta Lake (persistance des données)
-        query_delta = activities_transformed.writeStream \
+        # Écriture append-only dans Bronze Delta Lake
+        query_delta = bronze_df.writeStream \
             .outputMode("append") \
             .format("delta") \
             .option("checkpointLocation", CHECKPOINT_PATH) \
-            .option("path", DELTA_PATH) \
-            .queryName("Activities vers Delta Lake") \
+            .option("path", BRONZE_PATH) \
+            .queryName("Bronze - Activities") \
             .start()
 
         # Affichage console en parallèle pour le monitoring
-        query_console = activities_transformed.writeStream \
+        query_console = bronze_df.writeStream \
             .outputMode("append") \
             .format("console") \
             .option("truncate", False) \
             .option("numRows", 50) \
-            .option("checkpointLocation", "/opt/spark/checkpoints/activities_console") \
-            .queryName("Activities Console Monitor") \
+            .option("checkpointLocation", "/opt/spark/checkpoints/bronze_console") \
+            .queryName("Bronze Console Monitor") \
             .start()
 
-        print(f"Données persistées dans Delta Lake : {DELTA_PATH}")
+        print(f"Bronze layer : {BRONZE_PATH}")
         print("En attente de nouvelles données...")
 
-        # Attendre la fin des deux streams
         spark.streams.awaitAnyTermination()
 
     except Exception as e:

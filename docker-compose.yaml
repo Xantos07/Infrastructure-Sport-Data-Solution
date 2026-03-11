@@ -130,6 +130,8 @@ services:
     volumes:
       - spark_master_data:/opt/spark/work
       - delta_data:/opt/spark/delta
+      - ./powerbi_data:/opt/spark/powerbi_data
+      - ./Inputs:/opt/spark/inputs:ro
     environment:
       - SPARK_NO_DAEMONIZE=true
     depends_on:
@@ -151,6 +153,8 @@ services:
     volumes:
       - spark_worker_data:/opt/spark/work
       - delta_data:/opt/spark/delta
+      - ./powerbi_data:/opt/spark/powerbi_data
+      - ./Inputs:/opt/spark/inputs:ro
     depends_on:
       - spark-master
       
