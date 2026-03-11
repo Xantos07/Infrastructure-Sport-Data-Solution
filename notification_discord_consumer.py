@@ -11,6 +11,8 @@ logger.info(data)
 
 
 # juste 5 fois pour ne pas spammer le webhook Discord
+# mettre en place qu'il notifie dès un ticket par contre si X tickets arrivent d'un coup
+# alors en afficher que 5
 for index, row in enumerate(data):
     if index >= 5:
         break

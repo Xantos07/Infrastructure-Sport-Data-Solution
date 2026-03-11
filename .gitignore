@@ -8,3 +8,10 @@ debezium.json
 .secrets
 .githooks
 note.md
+
+powerbi_data/
+*.pbix
+
+# CSV générés depuis Excel (prepare_reference_data.py)
+Inputs/employees.csv
+Inputs/sports.csv
