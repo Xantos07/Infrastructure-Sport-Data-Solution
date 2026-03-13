@@ -1,6 +1,6 @@
 import psycopg2
-from config_postgresql import load_config
-from config.logger import logger
+from .config_postgresql import load_config
+from .logger import logger
 
 def connect(config):
     """Connect to the PostgreSQL database server and return an open connection."""

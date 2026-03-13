@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import HttpUrl
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class Settings(BaseSettings):
     
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     @property
     def input_dir(self) -> Path:
         """Retourne le répertoire des fichiers d'entrée."""
+        inputs_dir = PROJECT_ROOT / "Inputs"
+        if inputs_dir.exists():
+            return inputs_dir
         return PROJECT_ROOT / "inputs"
     
     @property

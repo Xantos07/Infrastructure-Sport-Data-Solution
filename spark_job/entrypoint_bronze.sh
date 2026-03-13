@@ -10,10 +10,8 @@ echo " Delta path : ${DELTA_PATH}"
 echo "================================================"
  
 sleep 10
- 
-# Préparer les données de référence (Excel -> CSV)
-python3 /opt/spark/app/prepare_reference_data.py
- 
+
+
 exec /opt/spark/bin/spark-submit \
   --master "${SPARK_MASTER}" \
   --packages "io.delta:delta-spark_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.kafka:kafka-clients:3.4.0" \
@@ -21,9 +19,6 @@ exec /opt/spark/bin/spark-submit \
   --conf "spark.executor.cores=1" \
   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
   --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
-  --conf "spark.sql.streaming.checkpointLocation=/opt/spark/delta/checkpoints" \
   --conf "spark.sql.shuffle.partitions=2" \
   --conf "spark.default.parallelism=2" \
-  /opt/spark/app/spark_medallion_processor.py \
-  --mode "${MEDALLION_MODE:-watch}" \
-  --interval "${MEDALLION_INTERVAL:-120}"
+  /opt/spark/app/spark_consumer.py

@@ -136,6 +136,11 @@ services:
       CONFIG_STORAGE_TOPIC: my_connect_configs
       OFFSET_STORAGE_TOPIC: my_connect_offsets
       STATUS_STORAGE_TOPIC: my_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_PARTITIONS: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_PARTITIONS: "1"
       KEY_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
@@ -170,9 +175,9 @@ services:
       debezium-connector:
         condition: service_healthy
     volumes:
-      - ./debezium.json:/config/connector.json:ro
+      - ./config/debezium.json:/config/connector.json:ro
     # Vérifie si le connecteur existe déjà avant de l'enregistrer (idempotent)
-    command: >
+    command: |
       sh -c "
         echo 'Checking if connector already exists...';
         STATUS=$$(curl -s -o /dev/null -w '%{http_code}' http://debezium-connector:8083/connectors/postgresql-connector);
@@ -180,9 +185,7 @@ services:
           echo 'Connector already registered, skipping.';
         else
           echo 'Registering Debezium connector...';
-          curl -X POST http://debezium-connector:8083/connectors \
-            -H 'Content-Type: application/json' \
-            -d @/config/connector.json;
+          curl -X POST http://debezium-connector:8083/connectors -H 'Content-Type: application/json' -d @/config/connector.json;
           echo 'Connector registered successfully.';
         fi
       "
@@ -254,7 +257,7 @@ services:
     environment:
       - SPARK_NO_DAEMONIZE=true
       - SPARK_WORKER_MEMORY=1G
-      - SPARK_WORKER_CORES=1
+      - SPARK_WORKER_CORES=2
     ports:
       - '9091:8081'
     volumes:
@@ -265,10 +268,45 @@ services:
     depends_on:
       spark-master:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 10. SPARK SUBMIT — lance ton pipeline Delta Lake
+  # 10. SPARK Bronze — lance ton pipeline Delta Lake
+  # ─────────────────────────────────────────────
+
+  spark-consumer:
+    build:
+      context: .
+      dockerfile: spark_job/Dockerfile
+    container_name: spark-consumer
+    networks:
+      - redpanda_network
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+      debezium-init:
+        condition: service_completed_successfully
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+      BOOTSTRAP_SERVERS: redpanda-0:9092
+      KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
+      DELTA_PATH: /opt/spark/delta
+    volumes:
+      - delta_data:/opt/spark/delta
+      - ./Inputs:/opt/spark/app/config/inputs:ro
+    entrypoint: ["/opt/spark/app/entrypoint_bronze.sh"]
+    restart: on-failure
+
+  # ─────────────────────────────────────────────
+  # 11. SPARK Silver - Gold — lance ton pipeline Delta Lake
   # ─────────────────────────────────────────────
   spark-submit-job:
     build:
@@ -281,7 +319,7 @@ services:
       spark-master:
         condition: service_healthy
       spark-worker:
-        condition: service_started
+        condition: service_healthy
       debezium-init:
         condition: service_completed_successfully
     environment:
@@ -296,6 +334,7 @@ services:
       - delta_data:/opt/spark/delta
       - ./powerbi_data:/opt/spark/powerbi_data
       - ./Inputs:/opt/spark/app/config/inputs
+    entrypoint: ["/opt/spark/app/entrypoint.sh"]
     restart: on-failure
 
 volumes:

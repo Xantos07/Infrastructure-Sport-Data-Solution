@@ -24,6 +24,7 @@ COPY spark_job/spark_consumer.py .
 COPY spark_job/spark_medallion_processor.py .
 COPY spark_job/requirements.txt .
 COPY spark_job/entrypoint.sh .
-RUN chmod +x entrypoint.sh
+COPY spark_job/entrypoint_bronze.sh .
+RUN chmod +x entrypoint.sh entrypoint_bronze.sh
 
-ENTRYPOINT ["/opt/spark/app/entrypoint.sh"]
+# ENTRYPOINT ["/opt/spark/app/entrypoint.sh"]
