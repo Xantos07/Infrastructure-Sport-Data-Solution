@@ -150,3 +150,8 @@ Pour lire les données de toutes les couches (Bronze, Silver, Gold) :
 docker cp .\delta_reader.py spark-master:/opt/spark/work/delta_reader.py
 docker exec spark-master /opt/spark/bin/spark-submit --packages io.delta:delta-spark_2.12:3.2.0 /opt/spark/work/delta_reader.py
 ```
+
+
+
+docker compose build --no-cache spark-submit-job
+docker compose up spark-submit-job

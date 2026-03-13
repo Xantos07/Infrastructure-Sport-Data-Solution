@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import HttpUrl
 
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
     sheet_employees_id: str = ""
     sheet_sports_id: str = ""
 
-    discord_webhook_url: HttpUrl = ""
+    discord_webhook_url: Optional[HttpUrl] = None
     employees_xlsx_filename: str = "DonneesRH.xlsx"
     sport_xlsx_filename: str = "DonneesSportive.xlsx"
 

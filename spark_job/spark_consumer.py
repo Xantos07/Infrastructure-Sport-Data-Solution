@@ -43,6 +43,8 @@ def consume_activities():
     spark = SparkSession.builder \
         .appName("Bronze - Kafka to Delta Lake") \
         .config("spark.sql.adaptive.enabled", "false") \
+        .config("spark.sql.shuffle.partitions", "2") \
+        .config("spark.default.parallelism", "2") \
         .config("spark.jars.packages",
                 "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
                 "io.delta:delta-spark_2.12:3.2.0") \

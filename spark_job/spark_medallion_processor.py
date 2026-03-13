@@ -48,8 +48,8 @@ POWERBI_ACTIVITIES = "/opt/spark/powerbi_data/activities.parquet"
 # ============================================================
 # Données de référence (CSV préparés depuis Excel)
 # ============================================================
-REF_EMPLOYEES_CSV = "/opt/spark/inputs/employees.csv"
-REF_SPORTS_CSV = "/opt/spark/inputs/sports.csv"
+REF_EMPLOYEES_CSV = "/opt/spark/delta/inputs/employees.csv"
+REF_SPORTS_CSV    = "/opt/spark/delta/inputs/sports.csv"
 
 # ============================================================
 # Règles métier
@@ -65,11 +65,14 @@ def create_spark_session():
     return SparkSession.builder \
         .appName("Medallion Processor - Bronze/Silver/Gold") \
         .config("spark.sql.adaptive.enabled", "false") \
+        .config("spark.sql.shuffle.partitions", "2") \
+        .config("spark.default.parallelism", "2") \
         .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.2.0") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
         .getOrCreate()
+
 
 
 # ============================================================

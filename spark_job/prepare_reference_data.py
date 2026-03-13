@@ -9,22 +9,27 @@ Usage :
 """
 
 import pandas as pd
-from configuration import Settings
+from config.configuration import Settings
+import os
 
+csv_rh = "/opt/spark/delta/inputs/employees.csv"
+csv_sport = "/opt/spark/delta/inputs/sports.csv"
 
 def main():
     settings = Settings()
 
+    # Crée le dossier cible si besoin, A CORRIGER
+    os.makedirs(os.path.dirname(csv_rh), exist_ok=True)
+    os.makedirs(os.path.dirname(csv_sport), exist_ok=True)
+
     # DonneesRH.xlsx → employees.csv
     df_rh = pd.read_excel(settings.xlsx_employees_full_path)
-    csv_rh = settings.input_dir / "employees.csv"
     df_rh.to_csv(csv_rh, index=False, encoding="utf-8")
     print(f"Exporté : {csv_rh} ({len(df_rh)} lignes)")
     print(f"  Colonnes : {list(df_rh.columns)}")
 
     # DonneesSportive.xlsx → sports.csv
     df_sport = pd.read_excel(settings.xlsx_sport_full_path)
-    csv_sport = settings.input_dir / "sports.csv"
     df_sport.to_csv(csv_sport, index=False, encoding="utf-8")
     print(f"Exporté : {csv_sport} ({len(df_sport)} lignes)")
     print(f"  Colonnes : {list(df_sport.columns)}")
