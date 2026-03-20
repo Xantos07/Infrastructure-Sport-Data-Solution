@@ -10,7 +10,7 @@ def sample_df():
     return pd.DataFrame({
         "employee_id": [1, 2, 3, 4],
         "sport_practice": ["Running", None, "Natation", None],
-        "transport_mode": ["Voiture", "Marche/running", "Vélo/Trottinette/Autres", "Bus"],
+        "transport_mode": ["véhicule thermique/électrique", "Marche/running", "Vélo/Trottinette/Autres", "Transports en commun"],
     })
 
 

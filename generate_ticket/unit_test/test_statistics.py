@@ -16,7 +16,12 @@ class TestPrintStatistics:
     def test_normal_df_logs_percentages(self, caplog):
         df = pd.DataFrame({
             "sport_practice": ["Running", None, "Natation", None],
-            "transport_mode": ["Voiture", "Marche/running", "Vélo/Trottinette/Autres", "Bus"],
+            "transport_mode": [
+                "véhicule thermique/électrique",
+                "Marche/running",
+                "Vélo/Trottinette/Autres",
+                "véhicule thermique/électrique",
+            ],
         })
         with caplog.at_level(logging.INFO, logger="generate_ticket"):
             print_statistics(df)

@@ -9,14 +9,14 @@ Usage :
 """
 
 import pandas as pd
-from config.configuration import Settings
+from config.configuration import BaseAppSettings
 import os
 
 csv_rh = "/opt/spark/delta/inputs/employees.csv"
 csv_sport = "/opt/spark/delta/inputs/sports.csv"
 
 def main():
-    settings = Settings()
+    settings = BaseAppSettings()
 
     # Crée le dossier cible si besoin, A CORRIGER
     os.makedirs(os.path.dirname(csv_rh), exist_ok=True)

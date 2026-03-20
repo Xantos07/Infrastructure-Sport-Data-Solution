@@ -2,7 +2,7 @@
 *__pycache__/
 *.pyc
 .vscode/
-database.ini
+
 debezium.json
 *.pdf
 .secrets
@@ -13,5 +13,5 @@ powerbi_data/
 *.pbix
 
 # CSV générés depuis Excel (prepare_reference_data.py)
-Inputs/employees.csv
-Inputs/sports.csv
+inputs/employees.csv
+inputs/sports.csv

@@ -1,7 +1,6 @@
 from psycopg2.extras import execute_values
 
 from generate_ticket.models.ticket import ActivityTicket
-from config.config_postgresql import load_config
 from config.connect import connect
 from config.logger import logger
 
@@ -17,8 +16,7 @@ def insert_tickets_batch(tickets: list[ActivityTicket], clean_before_insert: boo
         logger.info("Aucun ticket à insérer.")
         return
 
-    config = load_config()
-    connection = connect(config)
+    connection = connect()
     if connection is None:
         return
 

@@ -1,15 +1,15 @@
 import pandas as pd
-from config.configuration import Settings, settings as default_settings
+from config.configuration import BaseAppSettings
 from config.logger import logger
 
 REQUIRED_RH_COLUMNS = {"ID salarié", "Moyen de déplacement"}
 REQUIRED_SPORT_COLUMNS = {"ID salarié", "Pratique d'un sport"}
 
 
-def load_employee_data(settings: Settings | None = None) -> pd.DataFrame:
+def load_employee_data(settings: BaseAppSettings | None = None) -> pd.DataFrame:
     """Charge et fusionne les données RH et sportives depuis les fichiers Excel."""
     if settings is None:
-        settings = default_settings
+        settings = BaseAppSettings()
 
     rh_path = settings.xlsx_employees_full_path
     sport_path = settings.xlsx_sport_full_path

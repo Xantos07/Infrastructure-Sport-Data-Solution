@@ -53,7 +53,7 @@ def main() -> PipelineResult:
         tickets = generate_tickets(df_sport_only, df_transport_only, df_both, total=500)
 
         # 5. Chargement dans PostgreSQL
-        insert_tickets_batch(tickets)
+        insert_tickets_batch(tickets, False)
 
         result = PipelineResult(
             total_employees=total_employees,

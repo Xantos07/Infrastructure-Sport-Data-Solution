@@ -15,14 +15,13 @@ def reset_seed():
     """Réinitialise la seed avant chaque test pour la reproductibilité."""
     set_seed(42)
 
-
 @pytest.fixture
 def groups():
     """3 groupes de test."""
     df_sport = pd.DataFrame({
         "employee_id": [1, 2],
         "sport_practice": ["Running", "Natation"],
-        "transport_mode": ["Voiture", "Bus"],
+        "transport_mode": ["véhicule thermique/électrique", "Transports en commun"],
     })
     df_transport = pd.DataFrame({
         "employee_id": [3],

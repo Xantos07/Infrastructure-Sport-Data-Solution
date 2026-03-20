@@ -16,9 +16,9 @@ services:
     image: postgres:latest
     container_name: postgres
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mydatabase
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     command:
       - "postgres"
       - "-c"
@@ -34,7 +34,7 @@ services:
     networks:
       - redpanda_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d mydatabase"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -42,22 +42,27 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 2. PGADMIN 
+  # 1. POSTGRES INIT (schema) — one-shot
   # ─────────────────────────────────────────────
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "8081:80"
+  postgres-init:
+    image: postgres:latest
+    container_name: postgres-init
     networks:
       - redpanda_network
     depends_on:
       postgres:
         condition: service_healthy
-    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./structureDb.sql:/sql/structureDb.sql:ro
+    command: |
+      sh -c "
+        echo 'Applying database schema...';
+        psql -h postgres -U ${POSTGRES_USER} -d ${POSTGRES_DB} -v ON_ERROR_STOP=1 -f /sql/structureDb.sql;
+        echo 'Database schema applied.';
+      "
+    restart: "no"
 
   # ─────────────────────────────────────────────
   # 3. REDPANDA
@@ -151,8 +156,8 @@ services:
     networks:
       - redpanda_network
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
       redpanda-0:
         condition: service_healthy
     healthcheck:
@@ -187,7 +192,13 @@ services:
           echo 'Registering Debezium connector...';
           curl -X POST http://debezium-connector:8083/connectors -H 'Content-Type: application/json' -d @/config/connector.json;
           echo 'Connector registered successfully.';
-        fi
+        fi;
+
+        echo 'Applying topic retention...';
+        curl -s -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs \
+          -H 'Content-Type: application/json' \
+          -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}' || true;
+        echo 'Done.';
       "
     restart: "no"
 
@@ -211,6 +222,12 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}   # via .env
       KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
       DISCORD_INTERVAL: ${DISCORD_INTERVAL:-300}
+    healthcheck :
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
@@ -230,7 +247,7 @@ services:
       - spark_master_data:/opt/spark/work
       - delta_data:/opt/spark/delta
       - ./powerbi_data:/opt/spark/powerbi_data
-      - ./Inputs:/opt/spark/inputs:ro
+      - ./inputs:/opt/spark/inputs:ro
     environment:
       - SPARK_NO_DAEMONIZE=true
     healthcheck:
@@ -256,7 +273,7 @@ services:
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
     environment:
       - SPARK_NO_DAEMONIZE=true
-      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_MEMORY=2G
       - SPARK_WORKER_CORES=2
     ports:
       - '9091:8081'
@@ -264,7 +281,7 @@ services:
       - spark_worker_data:/opt/spark/work
       - delta_data:/opt/spark/delta
       - ./powerbi_data:/opt/spark/powerbi_data
-      - ./Inputs:/opt/spark/inputs:ro
+      - ./inputs:/opt/spark/inputs:ro
     depends_on:
       spark-master:
         condition: service_healthy
@@ -301,8 +318,14 @@ services:
       DELTA_PATH: /opt/spark/delta
     volumes:
       - delta_data:/opt/spark/delta
-      - ./Inputs:/opt/spark/app/config/inputs:ro
+      - ./inputs:/opt/spark/app/inputs:ro
     entrypoint: ["/opt/spark/app/entrypoint_bronze.sh"]
+    healthcheck :
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: on-failure
 
   # ─────────────────────────────────────────────
@@ -333,8 +356,8 @@ services:
     volumes:
       - delta_data:/opt/spark/delta
       - ./powerbi_data:/opt/spark/powerbi_data
-      - ./Inputs:/opt/spark/app/config/inputs
-    entrypoint: ["/opt/spark/app/entrypoint.sh"]
+      - ./inputs:/opt/spark/app/inputs:ro
+    entrypoint: ["/opt/spark/app/entrypoint_silver_gold.sh"]
     restart: on-failure
 
 volumes:

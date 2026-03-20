@@ -1,12 +1,12 @@
 import os
 import time
 import requests
-from config.configuration import Settings
+from config.configuration import DiscordSettings
 from config.logger import logger
 from message_processor import get_latest_activity
 from kafka_consumer import consumer
 
-settings = Settings()
+settings = DiscordSettings()
 
 INTERVAL_SEC = int(os.environ.get("DISCORD_INTERVAL", "300"))  # 5 minutes par défaut
 

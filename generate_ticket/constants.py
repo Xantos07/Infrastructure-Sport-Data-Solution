@@ -2,7 +2,7 @@
 TRANSPORT_MODES = ["Marche/running", "Vélo/Trottinette/Autres"]
 
 # Types de sport avec distance mesurable
-SPORT_TYPES_WITH_DISTANCE = ["Running", "Randonnée", "Triathlon", "Natation"]
+SPORT_TYPES_WITH_DISTANCE = ["Runing", "Randonnée", "Triathlon", "Natation"]
 
 # Commentaires prédéfinis pour les tickets
 COMMENTAIRES_TRANSPORT = [

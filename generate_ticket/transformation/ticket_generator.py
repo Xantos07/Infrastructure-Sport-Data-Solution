@@ -11,8 +11,8 @@ from generate_ticket.constants import (
 from generate_ticket.models.ticket import ActivityTicket
 
 # Générateur aléatoire reproductible (seed configurable)
-_rng = np.random.default_rng(seed=42)
-
+#_rng = np.random.default_rng(seed=42)
+_rng = np.random.default_rng()
 
 def set_seed(seed: int) -> None:
     """Réinitialise le générateur aléatoire avec une seed donnée."""

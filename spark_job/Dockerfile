@@ -23,8 +23,8 @@ COPY spark_job/prepare_reference_data.py .
 COPY spark_job/spark_consumer.py .
 COPY spark_job/spark_medallion_processor.py .
 COPY spark_job/requirements.txt .
-COPY spark_job/entrypoint.sh .
+COPY spark_job/entrypoint_silver_gold.sh .
 COPY spark_job/entrypoint_bronze.sh .
-RUN chmod +x entrypoint.sh entrypoint_bronze.sh
+RUN chmod +x entrypoint_silver_gold.sh entrypoint_bronze.sh
 
-# ENTRYPOINT ["/opt/spark/app/entrypoint.sh"]
+# ENTRYPOINT ["/opt/spark/app/entrypoint_silver_gold.sh"]
