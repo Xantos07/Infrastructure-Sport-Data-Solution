@@ -1,27 +1,29 @@
-Write-Host "================================================"
-Write-Host " Pipeline de données sportives — OpenClassrooms"
-Write-Host "================================================"
+#!/bin/bash
+set -e
+
+echo "================================================"
+echo " Pipeline de données sportives — OpenClassrooms"
+echo "================================================"
 
 # Infrastructure Docker
 docker-compose up -d
 
-# Attendre que postgres-init soit terminé (lui-même attend que postgres soit healthy)
-Write-Host "En attente de l'initialisation de PostgreSQL..."
-docker-compose wait postgres-init
-
-Write-Host "PostgreSQL prêt !"
+# Attendre que postgres-init soit terminé
+echo "En attente de l'initialisation de PostgreSQL..."
+docker wait postgres-init
+echo "PostgreSQL prêt !"
 
 # Environnement Python
-if (-Not (Test-Path "venv")) {
+if [ ! -d "venv" ]; then
     py -m venv venv
-}
+fi
 
-.\venv\Scripts\Activate.ps1
+source venv/Scripts/Activate
 pip install -r requirements.txt
 
 # Génération des tickets
 py -m generate_ticket.main
 
-Write-Host "================================================"
-Write-Host " Pipeline démarré avec succès !"
-Write-Host "================================================"
+echo "================================================"
+echo " Pipeline démarré avec succès !"
+echo "================================================"
