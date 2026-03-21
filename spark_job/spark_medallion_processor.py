@@ -6,16 +6,16 @@ Traite les données du Delta Lake selon l'architecture Medallion :
   Silver : Données nettoyées, dédupliquées (MERGE) + table de référence employés
   Gold   : Métriques métier — Éligibilité Prime sportive & Journées bien-être
 
-Produit également des fichiers Parquet pour Power BI Desktop.
+  ┌─────────────────────────────────────────────────────────┐
+  │  Responsabilités par couche                             │
+  │  Silver → faits bruts structurés  (1 ticket = 1 ligne) │
+  │  Gold   → agrégats + éligibilité  (1 employé = 1 ligne) │
+  │  Power BI → calculs paramétrables (taux, seuils, KPIs)  │
+  └─────────────────────────────────────────────────────────┘
 
-Usage :
-  docker exec spark-master /opt/spark/bin/spark-submit \
-    --packages io.delta:delta-spark_2.12:3.2.0 \
-    /opt/spark/work/spark_medallion_processor.py --mode single
-
-  Modes :
-    --mode single : Traitement unique puis arrêt
-    --mode watch  : Traitement continu toutes les N secondes (défaut: 60s)
+Stockage : MinIO (S3-compatible)
+  Delta Lake : s3a://delta-lake/
+  Parquet PBI : s3a://powerbi/
 """
 
 import argparse
@@ -30,49 +30,56 @@ from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 
 # ============================================================
-# Chemins Delta Lake — Architecture Medallion
+# Chemins Delta Lake — MinIO (s3a://)
 # ============================================================
-BRONZE_PATH = "/opt/spark/delta/bronze/activities"
+BRONZE_PATH            = "s3a://delta-lake/bronze/activities"
 
-SILVER_ACTIVITIES_PATH = "/opt/spark/delta/silver/activities"
-SILVER_EMPLOYEES_PATH = "/opt/spark/delta/silver/employees"
+SILVER_ACTIVITIES_PATH = "s3a://delta-lake/silver/activities"
+SILVER_EMPLOYEES_PATH  = "s3a://delta-lake/silver/employees"
 
-GOLD_ELIGIBILITY_PATH = "/opt/spark/delta/gold/employee_eligibility"
-
-# ============================================================
-# Sorties Parquet pour Power BI Desktop
-# ============================================================
-POWERBI_ELIGIBILITY = "/opt/spark/powerbi_data/employee_eligibility.parquet"
-POWERBI_ACTIVITIES = "/opt/spark/powerbi_data/activities.parquet"
+GOLD_ELIGIBILITY_PATH  = "s3a://delta-lake/gold/employee_eligibility"
 
 # ============================================================
-# Données de référence (CSV préparés depuis Excel)
+# Sorties Parquet pour Power BI Desktop — MinIO (s3a://)
+# S3A gère l'overwrite proprement, pas besoin de suppression manuelle
 # ============================================================
-REF_EMPLOYEES_CSV = "/opt/spark/delta/inputs/employees.csv"
-REF_SPORTS_CSV    = "/opt/spark/delta/inputs/sports.csv"
+POWERBI_ELIGIBILITY = "s3a://powerbi/employee_eligibility.parquet"
+POWERBI_ACTIVITIES  = "s3a://powerbi/activities.parquet"
 
 # ============================================================
-# Règles métier
+# Données de référence (CSV montés via volume Docker)
 # ============================================================
-# Modes de transport considérés comme sportifs
-SPORT_TRANSPORT_MODES = ["Marche/running", "Vélo/Trottinette/Autres"]
-# Nombre minimum d'activités externes pour les journées bien-être
+REF_EMPLOYEES_CSV = "s3a://delta-lake/inputs/employees.csv"
+REF_SPORTS_CSV    = "s3a://delta-lake/inputs/sports.csv"
+# ============================================================
+# Règles métier — seuils d'éligibilité (stables, pas de taux)
+# Les taux financiers (ex: 5% prime) sont gérés dans Power BI
+# via What-If Parameters pour pouvoir les modifier en démo.
+# ============================================================
+SPORT_TRANSPORT_MODES   = ["Marche/running", "Vélo/Trottinette/Autres"]
 MIN_ACTIVITIES_WELLNESS = 15
 
 
 def create_spark_session():
-    """Crée une session Spark avec support Delta Lake"""
+    """Crée une session Spark avec support Delta Lake + MinIO"""
     return SparkSession.builder \
         .appName("Medallion Processor - Bronze/Silver/Gold") \
         .config("spark.sql.adaptive.enabled", "false") \
         .config("spark.sql.shuffle.partitions", "2") \
         .config("spark.default.parallelism", "2") \
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.2.0") \
+        .config("spark.jars.packages",
+                "io.delta:delta-spark_2.12:3.2.0,"
+                "org.apache.hadoop:hadoop-aws:3.3.4,"
+                "com.amazonaws:aws-java-sdk-bundle:1.12.262") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
+        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
-
 
 
 # ============================================================
@@ -80,46 +87,31 @@ def create_spark_session():
 # ============================================================
 
 def process_silver_employees(spark):
-    """Silver : charge les données de référence employés (CSV → Delta Lake)"""
     print("\n" + "=" * 60)
     print("SILVER - Données de référence employés")
     print("=" * 60)
 
-    # Lecture des CSV de référence
-    df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, inferSchema=True,
-                                  encoding="UTF-8")
-    df_sports = spark.read.csv(REF_SPORTS_CSV, header=True, inferSchema=True,
-                               encoding="UTF-8")
+    df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, inferSchema=True, encoding="UTF-8")
+    df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, inferSchema=True, encoding="UTF-8")
 
-    # Jointure RH + Sports sur l'ID salarié
     df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
 
-    # Normalisation de TOUS les noms de colonnes pour Delta Lake
-    # (suppression espaces, accents, apostrophes → underscores)
     def normalize_column_name(name):
         import unicodedata
-        # Supprimer les accents
         name = unicodedata.normalize('NFD', name)
         name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
-        # Remplacer espaces, apostrophes par underscore
         name = name.replace(' ', '_').replace("'", '_').replace('é', 'e').replace('è', 'e')
         return name.lower()
 
     for old_col in df_ref.columns:
-        new_col = normalize_column_name(old_col)
-        df_ref = df_ref.withColumnRenamed(old_col, new_col)
+        df_ref = df_ref.withColumnRenamed(old_col, normalize_column_name(old_col))
 
-    # Renommage final des colonnes clés pour cohérence avec le reste du pipeline
     silver_employees = df_ref \
-        .withColumnRenamed("id_salarie", "employee_id") \
+        .withColumnRenamed("id_salarie",          "employee_id") \
         .withColumnRenamed("moyen_de_deplacement", "transport_mode") \
-        .withColumnRenamed("pratique_d_un_sport", "external_sport") \
+        .withColumnRenamed("pratique_d_un_sport",  "external_sport") \
         .withColumn("updated_at", current_timestamp())
-    
-    # Les colonnes normalisées : nom, prenom, bu, type_de_contrat, date_de_naissance, 
-    # date_d_embauche, nombre_de_jours_de_cp, adresse_du_domicile, salaire_brut
 
-    # Écriture dans Silver (overwrite : données de référence statiques)
     silver_employees.write.format("delta") \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
@@ -131,12 +123,10 @@ def process_silver_employees(spark):
 
 
 def process_silver_activities(spark):
-    """Silver : déduplique les événements CDC de Bronze et applique MERGE"""
     print("\n" + "=" * 60)
     print("SILVER - Traitement Bronze → Silver (activités)")
     print("=" * 60)
 
-    # Lecture de la couche Bronze
     try:
         bronze_df = spark.read.format("delta").load(BRONZE_PATH)
     except Exception as e:
@@ -150,14 +140,12 @@ def process_silver_activities(spark):
 
     print(f"  Bronze : {bronze_count} événements CDC")
 
-    # Déduplication : garder le dernier événement par ID d'activité
     window = Window.partitionBy("id").orderBy(desc("ingested_at"))
     latest_df = bronze_df \
         .withColumn("rn", row_number().over(window)) \
         .filter("rn = 1") \
         .drop("rn")
 
-    # Ajout du flag is_commute (déplacement au travail vs activité externe)
     silver_data = latest_df.select(
         col("id"),
         col("employee_id"),
@@ -172,11 +160,9 @@ def process_silver_activities(spark):
         current_timestamp().alias("updated_at")
     )
 
-    # Vérifier si la table Silver existe déjà pour faire un MERGE
     try:
         silver_table = DeltaTable.forPath(spark, SILVER_ACTIVITIES_PATH)
 
-        # MERGE : upsert des enregistrements actifs, suppression des supprimés
         silver_table.alias("silver").merge(
             silver_data.alias("new"),
             "silver.id = new.id"
@@ -185,27 +171,27 @@ def process_silver_activities(spark):
         ).whenMatchedUpdate(
             condition="new.__deleted IS NULL OR new.__deleted != 'true'",
             set={
-                "employee_id": "new.employee_id",
+                "employee_id":    "new.employee_id",
                 "start_datetime": "new.start_datetime",
-                "sport_type": "new.sport_type",
-                "distance": "new.distance",
-                "elapsed_time": "new.elapsed_time",
-                "details": "new.details",
-                "is_commute": "new.is_commute",
-                "updated_at": "new.updated_at"
+                "sport_type":     "new.sport_type",
+                "distance":       "new.distance",
+                "elapsed_time":   "new.elapsed_time",
+                "details":        "new.details",
+                "is_commute":     "new.is_commute",
+                "updated_at":     "new.updated_at"
             }
         ).whenNotMatchedInsert(
             condition="new.__deleted IS NULL OR new.__deleted != 'true'",
             values={
-                "id": "new.id",
-                "employee_id": "new.employee_id",
+                "id":             "new.id",
+                "employee_id":    "new.employee_id",
                 "start_datetime": "new.start_datetime",
-                "sport_type": "new.sport_type",
-                "distance": "new.distance",
-                "elapsed_time": "new.elapsed_time",
-                "details": "new.details",
-                "is_commute": "new.is_commute",
-                "updated_at": "new.updated_at"
+                "sport_type":     "new.sport_type",
+                "distance":       "new.distance",
+                "elapsed_time":   "new.elapsed_time",
+                "details":        "new.details",
+                "is_commute":     "new.is_commute",
+                "updated_at":     "new.updated_at"
             }
         ).execute()
 
@@ -213,14 +199,11 @@ def process_silver_activities(spark):
         print(f"  → Silver activities (MERGE) : {result_count} activités → {SILVER_ACTIVITIES_PATH}")
 
     except Exception:
-        # Premier lancement : la table Silver n'existe pas encore
         active_data = silver_data.filter(
             col("__deleted").isNull() | (col("__deleted") != "true")
         ).drop("__deleted")
 
-        active_data.write.format("delta") \
-            .mode("overwrite") \
-            .save(SILVER_ACTIVITIES_PATH)
+        active_data.write.format("delta").mode("overwrite").save(SILVER_ACTIVITIES_PATH)
 
         result_count = active_data.count()
         print(f"  → Silver activities (initial) : {result_count} activités → {SILVER_ACTIVITIES_PATH}")
@@ -233,43 +216,32 @@ def process_silver_activities(spark):
 # ============================================================
 
 def process_gold(spark):
-    """Gold : calcul de l'éligibilité Prime sportive & Journées bien-être"""
     print("\n" + "=" * 60)
     print("GOLD - Éligibilité des employés")
     print("=" * 60)
 
-    # Lecture des tables Silver
     try:
         activities = spark.read.format("delta").load(SILVER_ACTIVITIES_PATH)
-        employees = spark.read.format("delta").load(SILVER_EMPLOYEES_PATH)
+        employees  = spark.read.format("delta").load(SILVER_EMPLOYEES_PATH)
     except Exception as e:
         print(f"  Données Silver manquantes : {e}")
         return 0
 
-    # Statistiques d'activités par employé
     activity_stats = activities.groupBy("employee_id").agg(
         count("*").alias("total_activities"),
-        spark_sum(when(col("is_commute") == True, 1).otherwise(0))
-            .alias("total_commute_activities"),
-        spark_sum(when(col("is_commute") == False, 1).otherwise(0))
-            .alias("total_external_activities"),
-        spark_sum(spark_coalesce(col("distance"), lit(0)))
-            .alias("total_distance_m"),
-        spark_sum(spark_coalesce(col("elapsed_time"), lit(0)))
-            .alias("total_elapsed_time_s")
+        spark_sum(when(col("is_commute") == True, 1).otherwise(0)).alias("total_commute_activities"),
+        spark_sum(when(col("is_commute") == False, 1).otherwise(0)).alias("total_external_activities"),
+        spark_sum(spark_coalesce(col("distance"),     lit(0))).alias("total_distance_m"),
+        spark_sum(spark_coalesce(col("elapsed_time"), lit(0))).alias("total_elapsed_time_s")
     )
 
-    # Jointure avec les données de référence employés
     gold_df = employees.join(activity_stats, on="employee_id", how="left") \
         .fillna(0, subset=[
             "total_activities", "total_commute_activities",
             "total_external_activities", "total_distance_m", "total_elapsed_time_s"
         ])
 
-    # ── Règle 1 : Prime sportive (5% du salaire brut) ──
-    # Éligible si :
-    #   - Le mode de déplacement déclaré est sportif (Marche/running ou Vélo/Trottinette/Autres)
-    #   - L'employé a effectivement des activités de déplacement sportif (preuves)
+    # Règle 1 : Prime sportive — MONTANT calculé dans Power BI (What-If Parameter)
     gold_df = gold_df.withColumn(
         "is_eligible_prime_sportive",
         when(
@@ -277,16 +249,9 @@ def process_gold(spark):
             (col("total_commute_activities") > 0),
             lit(True)
         ).otherwise(lit(False))
-    ).withColumn(
-        "prime_sportive_montant",
-        when(
-            col("is_eligible_prime_sportive") == True,
-            col("salaire_brut") * 0.05
-        ).otherwise(lit(0.0))
     )
 
-    # ── Règle 2 : 5 journées bien-être ──
-    # Éligible si : au minimum 15 activités physiques externes dans l'année
+    # Règle 2 : Journées bien-être — NOMBRE de journées paramétrable dans Power BI
     gold_df = gold_df.withColumn(
         "is_eligible_journees_bien_etre",
         when(
@@ -295,7 +260,6 @@ def process_gold(spark):
         ).otherwise(lit(False))
     ).withColumn("computed_at", current_timestamp())
 
-    # Sélection des colonnes finales pour Gold
     gold_final = gold_df.select(
         "employee_id",
         "nom",
@@ -304,44 +268,37 @@ def process_gold(spark):
         "type_de_contrat",
         "transport_mode",
         "external_sport",
-        "salaire_brut",
+        "salaire_brut",                    # fait brut → Prime = salaire_brut * [taux PBI]
         "total_activities",
         "total_commute_activities",
         "total_external_activities",
         "total_distance_m",
         "total_elapsed_time_s",
-        "is_eligible_prime_sportive",
-        "prime_sportive_montant",
-        "is_eligible_journees_bien_etre",
+        "is_eligible_prime_sportive",      # booléen d'éligibilité
+        "is_eligible_journees_bien_etre",  # booléen d'éligibilité
         "computed_at"
     )
 
-    # Écriture dans Gold Delta Lake
+    # Écriture Gold Delta Lake (MinIO)
     gold_final.write.format("delta") \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
         .save(GOLD_ELIGIBILITY_PATH)
 
-    # ── Export Parquet pour Power BI Desktop ──
-    gold_final.coalesce(1).write \
-        .mode("overwrite") \
-        .parquet(POWERBI_ELIGIBILITY)
+    # Export Parquet Power BI (MinIO) — S3A gère l'overwrite, pas de suppression manuelle
+    gold_final.write.mode("overwrite").parquet(POWERBI_ELIGIBILITY)
+    activities.write.mode("overwrite").parquet(POWERBI_ACTIVITIES)
 
-    # Export des activités Silver en Parquet pour détail Power BI
-    activities.coalesce(1).write \
-        .mode("overwrite") \
-        .parquet(POWERBI_ACTIVITIES)
-
-    # Résumé
-    gold_count = gold_final.count()
-    eligible_prime = gold_final.filter(col("is_eligible_prime_sportive") == True).count()
+    gold_count        = gold_final.count()
+    eligible_prime    = gold_final.filter(col("is_eligible_prime_sportive") == True).count()
     eligible_wellness = gold_final.filter(col("is_eligible_journees_bien_etre") == True).count()
 
     print(f"  → {gold_count} employés traités → {GOLD_ELIGIBILITY_PATH}")
-    print(f"  ├── Éligibles prime sportive (5% salaire)  : {eligible_prime}")
-    print(f"  ├── Éligibles journées bien-être (≥15 act) : {eligible_wellness}")
+    print(f"  ├── Éligibles prime sportive                        : {eligible_prime} / {gold_count}")
+    print(f"  ├── Éligibles journées bien-être (≥{MIN_ACTIVITIES_WELLNESS} activités) : {eligible_wellness} / {gold_count}")
     print(f"  └── Parquet Power BI : {POWERBI_ELIGIBILITY}")
     print(f"                        {POWERBI_ACTIVITIES}")
+    print(f"  ℹ  Montant prime = salaire_brut × [Taux What-If] — calculé dans Power BI")
 
     return gold_count
 
@@ -351,27 +308,21 @@ def process_gold(spark):
 # ============================================================
 
 def run_medallion(spark):
-    """Exécute le pipeline complet Bronze → Silver → Gold"""
     print("\n" + "#" * 60)
     print("#  MEDALLION PIPELINE — Bronze → Silver → Gold")
     print("#" * 60)
-
     process_silver_employees(spark)
     process_silver_activities(spark)
     process_gold(spark)
-
     print("\n" + "#" * 60)
     print("#  PIPELINE TERMINÉ")
     print("#" * 60)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Medallion Processor : Bronze → Silver → Gold")
-    parser.add_argument("--mode", choices=["single", "watch"], default="single",
-                        help="single : traitement unique | watch : traitement continu")
-    parser.add_argument("--interval", type=int, default=60,
-                        help="Intervalle en secondes entre les traitements (mode watch)")
+    parser = argparse.ArgumentParser(description="Medallion Processor : Bronze → Silver → Gold")
+    parser.add_argument("--mode", choices=["single", "watch"], default="single")
+    parser.add_argument("--interval", type=int, default=60)
     args = parser.parse_args()
 
     spark = create_spark_session()

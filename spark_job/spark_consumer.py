@@ -1,5 +1,5 @@
 """
-BRONZE LAYER - Ingestion streaming Kafka → Delta Lake
+BRONZE LAYER - Ingestion streaming Kafka → Delta Lake (MinIO)
 
 Consomme les événements CDC (Debezium) depuis Redpanda et les persiste
 dans la couche Bronze du Delta Lake (append-only, données brutes).
@@ -7,10 +7,7 @@ dans la couche Bronze du Delta Lake (append-only, données brutes).
 Architecture Medallion :
   Bronze (ce script) → Silver → Gold → Power BI
 
-Usage :
-  docker exec spark-master /opt/spark/bin/spark-submit \
-    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,io.delta:delta-spark_2.12:3.2.0 \
-    /opt/spark/work/spark_consumer.py
+Stockage : MinIO (S3-compatible) — s3a://delta-lake/
 """
 
 from pyspark.sql import SparkSession
@@ -29,9 +26,10 @@ activity_schema = StructType([
     StructField("__deleted", StringType())
 ])
 
-# Couche Bronze - données brutes append-only
-BRONZE_PATH = "/opt/spark/delta/bronze/activities"
-CHECKPOINT_PATH = "/opt/spark/checkpoints/bronze_activities"
+# Couche Bronze — stockage MinIO
+BRONZE_PATH      = "s3a://delta-lake/bronze/activities"
+CHECKPOINT_PATH  = "s3a://delta-lake/checkpoints/bronze_activities"
+CHECKPOINT_CONSOLE = "s3a://delta-lake/checkpoints/bronze_console"
 
 
 def consume_activities():
@@ -47,9 +45,16 @@ def consume_activities():
         .config("spark.default.parallelism", "2") \
         .config("spark.jars.packages",
                 "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
-                "io.delta:delta-spark_2.12:3.2.0") \
+                "io.delta:delta-spark_2.12:3.2.0,"
+                "org.apache.hadoop:hadoop-aws:3.3.4,"
+                "com.amazonaws:aws-java-sdk-bundle:1.12.262") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
+        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
+        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
 
     try:
@@ -71,7 +76,7 @@ def consume_activities():
             .withColumn("start_datetime", from_unixtime(col("start_timestamp") / 1000000)) \
             .withColumn("ingested_at", current_timestamp())
 
-        # Écriture append-only dans Bronze Delta Lake
+        # Écriture append-only dans Bronze Delta Lake (MinIO)
         query_delta = bronze_df.writeStream \
             .outputMode("append") \
             .format("delta") \
@@ -86,7 +91,7 @@ def consume_activities():
             .format("console") \
             .option("truncate", False) \
             .option("numRows", 50) \
-            .option("checkpointLocation", "/opt/spark/checkpoints/bronze_console") \
+            .option("checkpointLocation", CHECKPOINT_CONSOLE) \
             .queryName("Bronze Console Monitor") \
             .start()
 
@@ -106,4 +111,3 @@ def consume_activities():
 
 if __name__ == "__main__":
     consume_activities()
-

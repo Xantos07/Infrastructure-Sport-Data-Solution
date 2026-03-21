@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 1. POSTGRES INIT (schema) — one-shot
+  # 2. POSTGRES INIT (schema) — one-shot
   # ─────────────────────────────────────────────
   postgres-init:
     image: postgres:latest
@@ -65,7 +65,56 @@ services:
     restart: "no"
 
   # ─────────────────────────────────────────────
-  # 3. REDPANDA
+  # 3. MINIO — stockage objet S3-compatible
+  #    Console : http://localhost:9001
+  # ─────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Console web
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    volumes:
+      - minio_data:/data
+    networks:
+      - redpanda_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # 4. MINIO INIT — crée les buckets au démarrage
+  # ─────────────────────────────────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    networks:
+      - redpanda_network
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_USER $$MINIO_PASSWORD;
+        mc mb --ignore-existing local/delta-lake;
+        mc mb --ignore-existing local/powerbi;
+        echo 'Buckets créés : delta-lake, powerbi';
+      "
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # 5. REDPANDA
   # ─────────────────────────────────────────────
   redpanda-0:
     command:
@@ -101,7 +150,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 4. REDPANDA CONSOLE
+  # 6. REDPANDA CONSOLE
   # ─────────────────────────────────────────────
   console:
     container_name: redpanda-console
@@ -130,7 +179,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 5. DEBEZIUM CONNECT
+  # 7. DEBEZIUM CONNECT
   # ─────────────────────────────────────────────
   debezium-connector:
     image: debezium/connect:2.1
@@ -169,7 +218,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 6. DEBEZIUM INIT — one-shot, enregistre le connecteur
+  # 8. DEBEZIUM INIT — one-shot, enregistre le connecteur
   # ─────────────────────────────────────────────
   debezium-init:
     image: curlimages/curl:latest
@@ -181,7 +230,6 @@ services:
         condition: service_healthy
     volumes:
       - ./config/debezium.json:/config/connector.json:ro
-    # Vérifie si le connecteur existe déjà avant de l'enregistrer (idempotent)
     command: |
       sh -c "
         echo 'Checking if connector already exists...';
@@ -195,15 +243,16 @@ services:
         fi;
 
         echo 'Applying topic retention...';
-        curl -s -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs \
+        RESPONSE=$$(curl -s -w '\n%{http_code}' -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs \
           -H 'Content-Type: application/json' \
-          -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}' || true;
+          -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}');
+        echo \"Retention response: $$RESPONSE\";
         echo 'Done.';
       "
     restart: "no"
 
   # ─────────────────────────────────────────────
-  # 7. CONSUMER DISCORD
+  # 9. CONSUMER DISCORD
   # ─────────────────────────────────────────────
   discord-consumer:
     build:
@@ -219,10 +268,10 @@ services:
         condition: service_completed_successfully
     environment:
       BOOTSTRAP_SERVERS: redpanda-0:9092
-      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}   # via .env
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
       DISCORD_INTERVAL: ${DISCORD_INTERVAL:-300}
-    healthcheck :
+    healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
@@ -231,7 +280,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 8. SPARK MASTER
+  # 10. SPARK MASTER
   # ─────────────────────────────────────────────
   spark-master:
     image: apache/spark:3.5.0
@@ -245,8 +294,6 @@ services:
       - '9090:8080'
     volumes:
       - spark_master_data:/opt/spark/work
-      - delta_data:/opt/spark/delta
-      - ./powerbi_data:/opt/spark/powerbi_data
       - ./inputs:/opt/spark/inputs:ro
     environment:
       - SPARK_NO_DAEMONIZE=true
@@ -259,10 +306,12 @@ services:
     depends_on:
       redpanda-0:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 9. SPARK WORKER
+  # 11. SPARK WORKER
   # ─────────────────────────────────────────────
   spark-worker:
     image: apache/spark:3.5.0
@@ -279,9 +328,6 @@ services:
       - '9091:8081'
     volumes:
       - spark_worker_data:/opt/spark/work
-      - delta_data:/opt/spark/delta
-      - ./powerbi_data:/opt/spark/powerbi_data
-      - ./inputs:/opt/spark/inputs:ro
     depends_on:
       spark-master:
         condition: service_healthy
@@ -294,9 +340,8 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # 10. SPARK Bronze — lance ton pipeline Delta Lake
+  # 12. SPARK BRONZE — ingestion Kafka → Delta Lake (MinIO)
   # ─────────────────────────────────────────────
-
   spark-consumer:
     build:
       context: .
@@ -311,16 +356,22 @@ services:
         condition: service_healthy
       debezium-init:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
     environment:
       SPARK_MASTER: spark://spark-master:7077
       BOOTSTRAP_SERVERS: redpanda-0:9092
       KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
-      DELTA_PATH: /opt/spark/delta
+      # Chemins Delta Lake sur MinIO (S3)
+      DELTA_PATH: s3a://delta-lake
+      # Credentials MinIO
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     volumes:
-      - delta_data:/opt/spark/delta
       - ./inputs:/opt/spark/app/inputs:ro
     entrypoint: ["/opt/spark/app/entrypoint_bronze.sh"]
-    healthcheck :
+    healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 10s
       timeout: 5s
@@ -329,7 +380,7 @@ services:
     restart: on-failure
 
   # ─────────────────────────────────────────────
-  # 11. SPARK Silver - Gold — lance ton pipeline Delta Lake
+  # 13. SPARK SILVER/GOLD — pipeline Medallion (MinIO)
   # ─────────────────────────────────────────────
   spark-submit-job:
     build:
@@ -345,17 +396,22 @@ services:
         condition: service_healthy
       debezium-init:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
     environment:
       SPARK_MASTER: spark://spark-master:7077
       BOOTSTRAP_SERVERS: redpanda-0:9092
       KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
-      DELTA_PATH: /opt/spark/delta
-      POWERBI_PATH: /opt/spark/powerbi_data
+      # Chemins Delta Lake + Parquet Power BI sur MinIO
+      DELTA_PATH: s3a://delta-lake
+      POWERBI_PATH: s3a://powerbi
+      # Credentials MinIO
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
       MEDALLION_MODE: watch
       MEDALLION_INTERVAL: "120"
     volumes:
-      - delta_data:/opt/spark/delta
-      - ./powerbi_data:/opt/spark/powerbi_data
       - ./inputs:/opt/spark/app/inputs:ro
     entrypoint: ["/opt/spark/app/entrypoint_silver_gold.sh"]
     restart: on-failure
@@ -365,4 +421,5 @@ volumes:
   redpanda-0: null
   spark_master_data: {}
   spark_worker_data: {}
-  delta_data: {}
+  minio_data: {}
+  # delta_data et powerbi_data supprimés => remplacés par MinIO
