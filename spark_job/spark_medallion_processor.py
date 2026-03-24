@@ -26,31 +26,35 @@ from pyspark.sql.functions import (
     col, row_number, desc, current_timestamp, when, lit, count,
     sum as spark_sum, coalesce as spark_coalesce
 )
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
+from config.configuration import SparkSettings
+from schemas import EMPLOYEES_CSV_SCHEMA, SPORTS_CSV_SCHEMA
 
 # ============================================================
 # Chemins Delta Lake — MinIO (s3a://)
 # ============================================================
-BRONZE_PATH            = "s3a://delta-lake/bronze/activities"
+spark_settings = SparkSettings()
+BRONZE_PATH            = spark_settings.delta_bronze_path
 
-SILVER_ACTIVITIES_PATH = "s3a://delta-lake/silver/activities"
-SILVER_EMPLOYEES_PATH  = "s3a://delta-lake/silver/employees"
+SILVER_ACTIVITIES_PATH = spark_settings.delta_silver_activities
+SILVER_EMPLOYEES_PATH  = spark_settings.delta_silver_employees
 
-GOLD_ELIGIBILITY_PATH  = "s3a://delta-lake/gold/employee_eligibility"
+GOLD_ELIGIBILITY_PATH  = spark_settings.delta_gold_eligibility
 
 # ============================================================
 # Sorties Parquet pour Power BI Desktop — MinIO (s3a://)
 # S3A gère l'overwrite proprement, pas besoin de suppression manuelle
 # ============================================================
-POWERBI_ELIGIBILITY = "s3a://powerbi/employee_eligibility.parquet"
-POWERBI_ACTIVITIES  = "s3a://powerbi/activities.parquet"
+POWERBI_ELIGIBILITY = spark_settings.powerbi_eligibility
+POWERBI_ACTIVITIES  = spark_settings.powerbi_activities
 
 # ============================================================
 # Données de référence (CSV montés via volume Docker)
 # ============================================================
-REF_EMPLOYEES_CSV = "s3a://delta-lake/inputs/employees.csv"
-REF_SPORTS_CSV    = "s3a://delta-lake/inputs/sports.csv"
+REF_EMPLOYEES_CSV = spark_settings.delta_input_employees
+REF_SPORTS_CSV    = spark_settings.delta_input_sports
 # ============================================================
 # Règles métier — seuils d'éligibilité (stables, pas de taux)
 # Les taux financiers (ex: 5% prime) sont gérés dans Power BI
@@ -62,21 +66,18 @@ MIN_ACTIVITIES_WELLNESS = 15
 
 def create_spark_session():
     """Crée une session Spark avec support Delta Lake + MinIO"""
+
     return SparkSession.builder \
         .appName("Medallion Processor - Bronze/Silver/Gold") \
         .config("spark.sql.adaptive.enabled", "false") \
         .config("spark.sql.shuffle.partitions", "2") \
         .config("spark.default.parallelism", "2") \
-        .config("spark.jars.packages",
-                "io.delta:delta-spark_2.12:3.2.0,"
-                "org.apache.hadoop:hadoop-aws:3.3.4,"
-                "com.amazonaws:aws-java-sdk-bundle:1.12.262") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.endpoint", spark_settings.minio_base_url) \
+        .config("spark.hadoop.fs.s3a.access.key", spark_settings.minio_user) \
+        .config("spark.hadoop.fs.s3a.secret.key", spark_settings.minio_password) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
@@ -91,9 +92,16 @@ def process_silver_employees(spark):
     print("SILVER - Données de référence employés")
     print("=" * 60)
 
+    # a corriger, inferSchema n'est pas fiable et optimisé pour les gros fichiers, il vaut mieux définir un schéma explicite
+    # ID salarié,Nom,Prénom,Date de naissance,BU,Date d'embauche,Salaire brut,Type de contrat,Nombre de jours de CP,
+    # Adresse du domicile,Moyen de déplacement
+
+    #erreur avec ID salarié ...
+    #df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, schema=EMPLOYEES_CSV_SCHEMA, encoding="UTF-8")
+    #df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, schema=SPORTS_CSV_SCHEMA, encoding="UTF-8")
+
     df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, inferSchema=True, encoding="UTF-8")
     df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, inferSchema=True, encoding="UTF-8")
-
     df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
 
     def normalize_column_name(name):
@@ -319,10 +327,43 @@ def run_medallion(spark):
     print("#" * 60)
 
 
+def bronze_has_data(spark):
+    # try:
+    #     return len(spark.read.format("delta").load(BRONZE_PATH).take(1)) > 0
+    # except Exception:
+    #     return False
+    if not DeltaTable.isDeltaTable(spark, BRONZE_PATH):
+        return False
+    try:
+        return spark.read.format("delta").load(BRONZE_PATH).take(1) != []
+    except Exception:
+        return False
+
+
+def wait_for_bronze_data(spark, timeout_seconds, interval_seconds):
+    print(f"Attente Bronze : path={BRONZE_PATH}")
+    deadline = None if timeout_seconds <= 0 else time.time() + timeout_seconds
+
+    while True:
+        if bronze_has_data(spark):
+            print("Bronze prête : au moins 1 enregistrement détecté.")
+            return True
+
+        if deadline is not None and time.time() >= deadline:
+            print(f"Timeout Bronze atteint ({timeout_seconds}s) sans donnée.")
+            return False
+
+        print(f"Bronze vide/non disponible, nouvelle vérification dans {interval_seconds}s...")
+        time.sleep(interval_seconds)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Medallion Processor : Bronze → Silver → Gold")
     parser.add_argument("--mode", choices=["single", "watch"], default="single")
     parser.add_argument("--interval", type=int, default=60)
+    parser.add_argument("--wait-bronze", action="store_true")
+    parser.add_argument("--bronze-wait-timeout", type=int, default=900)
+    parser.add_argument("--bronze-wait-interval", type=int, default=5)
     args = parser.parse_args()
 
     spark = create_spark_session()
@@ -331,6 +372,15 @@ def main():
         if args.mode == "single":
             run_medallion(spark)
         else:
+            if args.wait_bronze:
+                ready = wait_for_bronze_data(
+                    spark,
+                    timeout_seconds=args.bronze_wait_timeout,
+                    interval_seconds=args.bronze_wait_interval,
+                )
+                if not ready:
+                    raise RuntimeError("Bronze non prête avant timeout; arrêt du job medallion.")
+
             print(f"Mode watch : traitement toutes les {args.interval}s (Ctrl+C pour arrêter)")
             while True:
                 run_medallion(spark)

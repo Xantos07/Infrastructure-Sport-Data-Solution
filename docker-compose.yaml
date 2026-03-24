@@ -78,12 +78,13 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_BASE_URL: ${MINIO_BASE_URL}
     volumes:
       - minio_data:/data
     networks:
       - redpanda_network
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -sf ${MINIO_BASE_URL}/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -104,9 +105,10 @@ services:
     environment:
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 $$MINIO_USER $$MINIO_PASSWORD;
+        mc alias set local $${MINIO_BASE_URL} $$MINIO_USER $$MINIO_PASSWORD;
         mc mb --ignore-existing local/delta-lake;
         mc mb --ignore-existing local/powerbi;
         echo 'Buckets créés : delta-lake, powerbi';
@@ -182,7 +184,7 @@ services:
   # 7. DEBEZIUM CONNECT
   # ─────────────────────────────────────────────
   debezium-connector:
-    image: debezium/connect:2.1
+    image: debezium/connect:2.7.3.Final
     container_name: debezium-connector
     environment:
       BOOTSTRAP_SERVERS: redpanda-0:9092
@@ -271,12 +273,6 @@ services:
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
       DISCORD_INTERVAL: ${DISCORD_INTERVAL:-300}
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
@@ -365,18 +361,13 @@ services:
       # Chemins Delta Lake sur MinIO (S3)
       DELTA_PATH: s3a://delta-lake
       # Credentials MinIO
-      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_ENDPOINT: ${MINIO_BASE_URL:-http://minio:9000}
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
     volumes:
       - ./inputs:/opt/spark/app/inputs:ro
     entrypoint: ["/opt/spark/app/entrypoint_bronze.sh"]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
     restart: on-failure
 
   # ─────────────────────────────────────────────
@@ -406,15 +397,19 @@ services:
       DELTA_PATH: s3a://delta-lake
       POWERBI_PATH: s3a://powerbi
       # Credentials MinIO
-      MINIO_ENDPOINT: http://minio:9000
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_ENDPOINT: ${MINIO_BASE_URL:-http://minio:9000}
       MINIO_USER: ${MINIO_USER:-minioadmin}
       MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
       MEDALLION_MODE: watch
       MEDALLION_INTERVAL: "120"
+      BRONZE_WAIT_TIMEOUT: "900"
+      BRONZE_WAIT_INTERVAL: "5"
     volumes:
       - ./inputs:/opt/spark/app/inputs:ro
     entrypoint: ["/opt/spark/app/entrypoint_silver_gold.sh"]
     restart: on-failure
+# Prometheus et Grafana par la suite pour analyser les performances et la consommation des ressources 
 
 volumes:
   postgres_data: {}

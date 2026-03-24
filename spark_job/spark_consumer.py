@@ -13,23 +13,14 @@ Stockage : MinIO (S3-compatible) — s3a://delta-lake/
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, from_unixtime, current_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType
+from config.configuration import SparkSettings
+from schemas import ACTIVITY_DEBEZIUM_SCHEMA
 
-# Schéma des activités (format Debezium CDC)
-activity_schema = StructType([
-    StructField("id", IntegerType()),
-    StructField("employee_id", IntegerType()),
-    StructField("start_timestamp", LongType()),
-    StructField("sport_type", StringType()),
-    StructField("distance", IntegerType()),
-    StructField("elapsed_time", IntegerType()),
-    StructField("details", StringType()),
-    StructField("__deleted", StringType())
-])
-
+spark_settings = SparkSettings()
 # Couche Bronze — stockage MinIO
-BRONZE_PATH      = "s3a://delta-lake/bronze/activities"
-CHECKPOINT_PATH  = "s3a://delta-lake/checkpoints/bronze_activities"
-CHECKPOINT_CONSOLE = "s3a://delta-lake/checkpoints/bronze_console"
+BRONZE_PATH      = spark_settings.delta_bronze_path
+CHECKPOINT_PATH  = spark_settings.checkpoint_bronze
+CHECKPOINT_CONSOLE = spark_settings.delta_bronze_console_checkpoint_path
 
 
 def consume_activities():
@@ -38,21 +29,18 @@ def consume_activities():
     print("BRONZE LAYER - Ingestion streaming Kafka → Delta Lake")
     print("=" * 60)
 
+
+    
     spark = SparkSession.builder \
         .appName("Bronze - Kafka to Delta Lake") \
         .config("spark.sql.adaptive.enabled", "false") \
         .config("spark.sql.shuffle.partitions", "2") \
         .config("spark.default.parallelism", "2") \
-        .config("spark.jars.packages",
-                "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
-                "io.delta:delta-spark_2.12:3.2.0,"
-                "org.apache.hadoop:hadoop-aws:3.3.4,"
-                "com.amazonaws:aws-java-sdk-bundle:1.12.262") \
         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-        .config("spark.hadoop.fs.s3a.endpoint", "http://minio:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.endpoint", spark_settings.minio_base_url) \
+        .config("spark.hadoop.fs.s3a.access.key", spark_settings.minio_user) \
+        .config("spark.hadoop.fs.s3a.secret.key", spark_settings.minio_password) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
@@ -63,12 +51,12 @@ def consume_activities():
             .format("kafka") \
             .option("kafka.bootstrap.servers", "redpanda-0:9092") \
             .option("subscribe", "topic_activities.public.activities") \
-            .option("startingOffsets", "earliest") \
+            .option("startingOffsets", "latest") \
             .load()
 
         # Parsing des données JSON depuis Debezium
         activities_df = df.select(
-            from_json(col("value").cast("string"), activity_schema).alias("data")
+            from_json(col("value").cast("string"), ACTIVITY_DEBEZIUM_SCHEMA).alias("data")
         ).select("data.*")
 
         # Bronze : transformation minimale + métadonnées d'ingestion
@@ -78,6 +66,7 @@ def consume_activities():
 
         # Écriture append-only dans Bronze Delta Lake (MinIO)
         query_delta = bronze_df.writeStream \
+            .trigger(processingTime="30 seconds") \
             .outputMode("append") \
             .format("delta") \
             .option("checkpointLocation", CHECKPOINT_PATH) \
@@ -98,7 +87,7 @@ def consume_activities():
         print(f"Bronze layer : {BRONZE_PATH}")
         print("En attente de nouvelles données...")
 
-        spark.streams.awaitAnyTermination()
+        query_delta.awaitTermination()
 
     except Exception as e:
         print(f"Erreur: {e}")

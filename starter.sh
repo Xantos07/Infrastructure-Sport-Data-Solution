@@ -18,7 +18,14 @@ if [ ! -d "venv" ]; then
     py -m venv venv
 fi
 
-source venv/Scripts/Activate
+# Activation venv — détection automatique OS
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+    source venv/Scripts/activate
+else
+    source venv/bin/activate
+fi
+
+
 pip install -r requirements.txt
 
 # Génération des tickets

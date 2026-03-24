@@ -9,17 +9,22 @@ import io
 import os
 import boto3
 import pandas as pd
+from config.configuration import SparkSettings
+# a corriger avec les settings de spark dans configuration.py
+
+spark_settings = SparkSettings()
 
 # Lecture — volume monté en :ro depuis ./inputs/ sur le host
-INPUTS_DIR     = "/opt/spark/app/inputs"
-XLSX_EMPLOYEES = os.path.join(INPUTS_DIR, "DonneesRH.xlsx")
-XLSX_SPORT     = os.path.join(INPUTS_DIR, "DonneesSportive.xlsx")
+
+XLSX_EMPLOYEES = spark_settings.XLSX_EMPLOYEES
+XLSX_SPORT     = spark_settings.XLSX_SPORT
 
 # Destination MinIO — s3a://delta-lake/inputs/
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
-MINIO_USER     = os.getenv("MINIO_USER",     "minioadmin")
-MINIO_PASSWORD = os.getenv("MINIO_PASSWORD", "minioadmin")
-BUCKET         = "delta-lake"
+MINIO_ENDPOINT = spark_settings.minio_base_url
+MINIO_USER     = spark_settings.minio_user
+MINIO_PASSWORD = spark_settings.minio_password
+BUCKET         = spark_settings.minio_bucket
+
 
 
 def upload_csv_to_minio(df, key):

@@ -61,3 +61,26 @@ class TicketGenerationSettings(BaseAppSettings):
             "user": self.postgres_user,
             "password": self.postgres_password,
         }
+
+class SparkSettings(BaseAppSettings):
+    """Settings pour les jobs Spark."""
+
+    minio_base_url: str
+    minio_user: str
+    minio_password: str
+    minio_bucket: str = "delta-lake"
+
+    XLSX_EMPLOYEES: str = "/opt/spark/app/inputs/DonneesRH.xlsx"
+    XLSX_SPORT: str = "/opt/spark/app/inputs/DonneesSportive.xlsx"
+
+    delta_bronze_path: str = "s3a://delta-lake/bronze/activities"
+    delta_silver_activities: str = "s3a://delta-lake/silver/activities"
+    delta_silver_employees: str = "s3a://delta-lake/silver/employees"
+    delta_gold_eligibility: str = "s3a://delta-lake/gold/employee_eligibility"
+    powerbi_eligibility: str = "s3a://powerbi/employee_eligibility.parquet"
+    powerbi_activities: str = "s3a://powerbi/activities.parquet"
+    checkpoint_bronze: str = "s3a://delta-lake/checkpoints/bronze_activities"
+    delta_bronze_console_checkpoint_path: str = "s3a://delta-lake/checkpoints/bronze_console"
+    
+    delta_input_employees: str = "s3a://delta-lake/inputs/employees.csv"
+    delta_input_sports: str = "s3a://delta-lake/inputs/sports.csv"

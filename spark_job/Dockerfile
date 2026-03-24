@@ -13,7 +13,7 @@ RUN /opt/spark/bin/spark-submit \
 io.delta:delta-spark_2.12:3.2.0,\
 org.apache.hadoop:hadoop-aws:3.3.4,\
 com.amazonaws:aws-java-sdk-bundle:1.12.262" \
-  --dry-run /dev/null 2>/dev/null || true
+  --dry-run /dev/null 2>&1 | grep -E '(ERROR|WARNING|Downloading)' || true
   
 WORKDIR /opt/spark/app
 
@@ -26,6 +26,7 @@ COPY config/ ./config/
 
 # Copie des scripts pipeline
 COPY spark_job/prepare_reference_data.py .
+COPY spark_job/schemas.py .
 COPY spark_job/spark_consumer.py .
 COPY spark_job/spark_medallion_processor.py .
 COPY spark_job/requirements.txt .
