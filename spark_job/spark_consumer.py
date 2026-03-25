@@ -21,6 +21,9 @@ spark_settings = SparkSettings()
 BRONZE_PATH      = spark_settings.delta_bronze_path
 CHECKPOINT_PATH  = spark_settings.checkpoint_bronze
 CHECKPOINT_CONSOLE = spark_settings.delta_bronze_console_checkpoint_path
+KAFKA_BOOTSTRAP_SERVERS = spark_settings.bootstrap_servers
+KAFKA_TOPIC = spark_settings.kafka_topic
+KAFKA_STARTING_OFFSETS = spark_settings.kafka_starting_offsets
 
 
 def consume_activities():
@@ -28,6 +31,8 @@ def consume_activities():
     print("=" * 60)
     print("BRONZE LAYER - Ingestion streaming Kafka → Delta Lake")
     print("=" * 60)
+    print(f"Kafka brokers : {KAFKA_BOOTSTRAP_SERVERS}")
+    print(f"Kafka topic   : {KAFKA_TOPIC}")
 
 
     
@@ -49,9 +54,9 @@ def consume_activities():
         # Lecture du stream Kafka/Redpanda
         df = spark.readStream \
             .format("kafka") \
-            .option("kafka.bootstrap.servers", "redpanda-0:9092") \
-            .option("subscribe", "topic_activities.public.activities") \
-            .option("startingOffsets", "latest") \
+            .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS) \
+            .option("subscribe", KAFKA_TOPIC) \
+            .option("startingOffsets", KAFKA_STARTING_OFFSETS) \
             .load()
 
         # Parsing des données JSON depuis Debezium

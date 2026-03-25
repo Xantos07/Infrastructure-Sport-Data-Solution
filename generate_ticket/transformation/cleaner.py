@@ -1,6 +1,20 @@
 import pandas as pd
 from generate_ticket.constants import TRANSPORT_MODES
+from config.configuration import EmployeeRecord
 
+def validate_and_cast(df: pd.DataFrame) -> pd.DataFrame:
+    """Valide chaque ligne contre le schéma EmployeeRecord."""
+    records = df.to_dict(orient="records")
+    validated = [EmployeeRecord(**r).model_dump() for r in records]
+    return pd.DataFrame(validated)
+
+def rename_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Renomme les colonnes du DataFrame pour un usage interne propre."""
+    return df.rename(columns={
+        "ID salarié": "employee_id",
+        "Pratique d'un sport": "sport_practice",
+        "Moyen de déplacement": "transport_mode",
+    })
 
 def remove_non_eligible(df: pd.DataFrame) -> pd.DataFrame:
     """

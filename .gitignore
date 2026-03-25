@@ -11,7 +11,3 @@ note.md
 
 powerbi_data/
 *.pbix
-
-# CSV générés depuis Excel (prepare_reference_data.py)
-inputs/employees.csv
-inputs/sports.csv

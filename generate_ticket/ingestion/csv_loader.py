@@ -11,16 +11,16 @@ def load_employee_data(settings: BaseAppSettings | None = None) -> pd.DataFrame:
     if settings is None:
         settings = BaseAppSettings()
 
-    rh_path = settings.xlsx_employees_full_path
-    sport_path = settings.xlsx_sport_full_path
+    rh_path = settings.csv_employees_full_path
+    sport_path = settings.csv_sport_full_path
 
     if not rh_path.exists():
         raise FileNotFoundError(f"Fichier RH introuvable : {rh_path}")
     if not sport_path.exists():
         raise FileNotFoundError(f"Fichier sportif introuvable : {sport_path}")
 
-    df_rh = pd.read_excel(rh_path)
-    df_sport = pd.read_excel(sport_path)
+    df_rh = pd.read_csv(rh_path)
+    df_sport = pd.read_csv(sport_path)
 
     # Validation des colonnes attendues
     missing_rh = REQUIRED_RH_COLUMNS - set(df_rh.columns)
@@ -35,12 +35,5 @@ def load_employee_data(settings: BaseAppSettings | None = None) -> pd.DataFrame:
 
     if df.empty:
         logger.warning("La jointure RH/Sport a produit un DataFrame vide.")
-
-    # Renommer les colonnes pour un usage interne propre
-    df = df.rename(columns={
-        "ID salarié": "employee_id",
-        "Pratique d'un sport": "sport_practice",
-        "Moyen de déplacement": "transport_mode",
-    })
 
     return df

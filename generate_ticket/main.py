@@ -12,9 +12,9 @@ Pipeline de génération de tickets d'activité sportive.
 import sys
 from dataclasses import dataclass
 
-from generate_ticket.ingestion.excel_loader import load_employee_data
+from generate_ticket.ingestion.csv_loader import load_employee_data
 from generate_ticket.analytics.statistics import print_statistics
-from generate_ticket.transformation.cleaner import remove_non_eligible, split_by_eligibility
+from generate_ticket.transformation.cleaner import validate_and_cast, rename_columns, remove_non_eligible, split_by_eligibility
 from generate_ticket.transformation.ticket_generator import generate_tickets
 from generate_ticket.repository.activity_repository import insert_tickets_batch
 from config.logger import logger
@@ -36,15 +36,18 @@ def main() -> PipelineResult:
         # 1. Ingestion
         df = load_employee_data()
 
-        # 2. Statistiques avant nettoyage
+        # 2. Clean les colonnes pour les étapes suivantes
+        df = validate_and_cast(df)
+
+        # 3. Statistiques avant nettoyage
         print_statistics(df)
         total_employees = len(df)
 
-        # 3. Nettoyage
+        # 4. Nettoyage
         df = remove_non_eligible(df)
         eligible_employees = len(df)
 
-        # 4. Séparation en groupes + génération des tickets
+        # 5. Séparation en groupes + génération des tickets
         df_sport_only, df_transport_only, df_both = split_by_eligibility(df)
         logger.info(f"Sport uniquement : {len(df_sport_only)}")
         logger.info(f"Transport uniquement : {len(df_transport_only)}")
@@ -52,7 +55,7 @@ def main() -> PipelineResult:
 
         tickets = generate_tickets(df_sport_only, df_transport_only, df_both, total=500)
 
-        # 5. Chargement dans PostgreSQL
+        # 6. Chargement dans PostgreSQL
         insert_tickets_batch(tickets, False)
 
         result = PipelineResult(

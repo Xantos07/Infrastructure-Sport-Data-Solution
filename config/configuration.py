@@ -1,15 +1,16 @@
 from pathlib import Path
+import math
 from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import HttpUrl
+from pydantic import Field, HttpUrl, BaseModel, field_validator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class BaseAppSettings(BaseSettings):
     """Settings communs à tous les services."""
     
-    employees_xlsx_filename: str = "DonneesRH.xlsx"
-    sport_xlsx_filename: str = "DonneesSportive.xlsx"
+    employees_csv_filename: str = "employees.csv"
+    sport_csv_filename: str = "sports.csv"
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
@@ -26,12 +27,12 @@ class BaseAppSettings(BaseSettings):
         return PROJECT_ROOT / "inputs"
 
     @property
-    def xlsx_employees_full_path(self) -> Path:
-        return self.input_dir / self.employees_xlsx_filename
+    def csv_employees_full_path(self) -> Path:
+        return self.input_dir / self.employees_csv_filename
 
     @property
-    def xlsx_sport_full_path(self) -> Path:
-        return self.input_dir / self.sport_xlsx_filename
+    def csv_sport_full_path(self) -> Path:
+        return self.input_dir / self.sport_csv_filename
 
 
 class DiscordSettings(BaseAppSettings):
@@ -65,13 +66,17 @@ class TicketGenerationSettings(BaseAppSettings):
 class SparkSettings(BaseAppSettings):
     """Settings pour les jobs Spark."""
 
+    bootstrap_servers: str = "redpanda-0:9092"
+    kafka_topic: str = "topic_activities.public.activities"
+    kafka_starting_offsets: str = "latest"
+
     minio_base_url: str
     minio_user: str
     minio_password: str
     minio_bucket: str = "delta-lake"
 
-    XLSX_EMPLOYEES: str = "/opt/spark/app/inputs/DonneesRH.xlsx"
-    XLSX_SPORT: str = "/opt/spark/app/inputs/DonneesSportive.xlsx"
+    CSV_EMPLOYEES: str = "/opt/spark/app/inputs/employees.csv"
+    CSV_SPORT: str = "/opt/spark/app/inputs/sports.csv"
 
     delta_bronze_path: str = "s3a://delta-lake/bronze/activities"
     delta_silver_activities: str = "s3a://delta-lake/silver/activities"
@@ -84,3 +89,27 @@ class SparkSettings(BaseAppSettings):
     
     delta_input_employees: str = "s3a://delta-lake/inputs/employees.csv"
     delta_input_sports: str = "s3a://delta-lake/inputs/sports.csv"
+
+
+class EmployeeRecord(BaseModel):
+    employee_id: int = Field(alias="ID salarié")
+    transport_mode: str = Field(alias="Moyen de déplacement")
+    sport_practice: Optional[str] = Field(None, alias="Pratique d'un sport")
+
+    @field_validator("sport_practice", mode="before")
+    @classmethod
+    def normalize_sport_practice(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("employee_id")
+    @classmethod
+    def id_not_empty(cls, v):
+        if not v:
+            raise ValueError("employee_id ne peut pas être vide")
+        return v

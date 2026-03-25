@@ -168,7 +168,7 @@ def process_silver_activities(spark):
         current_timestamp().alias("updated_at")
     )
 
-    try:
+    if DeltaTable.isDeltaTable(spark, SILVER_ACTIVITIES_PATH):
         silver_table = DeltaTable.forPath(spark, SILVER_ACTIVITIES_PATH)
 
         silver_table.alias("silver").merge(
@@ -205,8 +205,7 @@ def process_silver_activities(spark):
 
         result_count = spark.read.format("delta").load(SILVER_ACTIVITIES_PATH).count()
         print(f"  → Silver activities (MERGE) : {result_count} activités → {SILVER_ACTIVITIES_PATH}")
-
-    except Exception:
+    else:
         active_data = silver_data.filter(
             col("__deleted").isNull() | (col("__deleted") != "true")
         ).drop("__deleted")

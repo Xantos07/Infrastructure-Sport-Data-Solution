@@ -13,7 +13,7 @@ services:
   # 1. POSTGRESQL
   # ─────────────────────────────────────────────
   postgres:
-    image: postgres:latest
+    image: postgres:16.4
     container_name: postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -45,7 +45,7 @@ services:
   # 2. POSTGRES INIT (schema) — one-shot
   # ─────────────────────────────────────────────
   postgres-init:
-    image: postgres:latest
+    image: postgres:16.4
     container_name: postgres-init
     networks:
       - redpanda_network
@@ -69,7 +69,7 @@ services:
   #    Console : http://localhost:9001
   # ─────────────────────────────────────────────
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     container_name: minio
     command: server /data --console-address ":9001"
     ports:
@@ -95,7 +95,7 @@ services:
   # 4. MINIO INIT — crée les buckets au démarrage
   # ─────────────────────────────────────────────
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
     container_name: minio-init
     networks:
       - redpanda_network
@@ -223,31 +223,54 @@ services:
   # 8. DEBEZIUM INIT — one-shot, enregistre le connecteur
   # ─────────────────────────────────────────────
   debezium-init:
-    image: curlimages/curl:latest
+    image: curlimages/curl:8.11.1
     container_name: debezium-init
     networks:
       - redpanda_network
     depends_on:
       debezium-connector:
         condition: service_healthy
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DEBEZIUM_SNAPSHOT_MODE: ${DEBEZIUM_SNAPSHOT_MODE:-always}
+      DEBEZIUM_TABLE_INCLUDE_LIST: ${DEBEZIUM_TABLE_INCLUDE_LIST:-public.activities}
+      TICKER_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
     volumes:
       - ./config/debezium.json:/config/connector.json:ro
     command: |
       sh -c "
+        set -eu;
+
+        escape_sed() {
+          printf '%s' \"$$1\" | sed -e 's/[\\/&]/\\\\&/g'
+        };
+
+        DB_HOST_ESCAPED=$$(escape_sed \"$$POSTGRES_HOST\");
+        DB_PORT_ESCAPED=$$(escape_sed \"$$POSTGRES_PORT\");
+        DB_USER_ESCAPED=$$(escape_sed \"$$POSTGRES_USER\");
+        DB_PASSWORD_ESCAPED=$$(escape_sed \"$$POSTGRES_PASSWORD\");
+        DB_NAME_ESCAPED=$$(escape_sed \"$$POSTGRES_DB\");
+        SNAPSHOT_MODE_ESCAPED=$$(escape_sed \"$$DEBEZIUM_SNAPSHOT_MODE\");
+        TABLE_LIST_ESCAPED=$$(escape_sed \"$$DEBEZIUM_TABLE_INCLUDE_LIST\");
+
+        sed -e \"s/__POSTGRES_HOST__/$$DB_HOST_ESCAPED/g\" -e \"s/__POSTGRES_PORT__/$$DB_PORT_ESCAPED/g\" -e \"s/__POSTGRES_USER__/$$DB_USER_ESCAPED/g\" -e \"s/__POSTGRES_PASSWORD__/$$DB_PASSWORD_ESCAPED/g\" -e \"s/__POSTGRES_DB__/$$DB_NAME_ESCAPED/g\" -e \"s/__DEBEZIUM_SNAPSHOT_MODE__/$$SNAPSHOT_MODE_ESCAPED/g\" -e \"s/__DEBEZIUM_TABLE_INCLUDE_LIST__/$$TABLE_LIST_ESCAPED/g\" /config/connector.json > /tmp/connector.resolved.json;
+
         echo 'Checking if connector already exists...';
         STATUS=$$(curl -s -o /dev/null -w '%{http_code}' http://debezium-connector:8083/connectors/postgresql-connector);
         if [ \"$$STATUS\" = '200' ]; then
           echo 'Connector already registered, skipping.';
         else
           echo 'Registering Debezium connector...';
-          curl -X POST http://debezium-connector:8083/connectors -H 'Content-Type: application/json' -d @/config/connector.json;
+          curl -fsS -X POST http://debezium-connector:8083/connectors -H 'Content-Type: application/json' -d @/tmp/connector.resolved.json;
           echo 'Connector registered successfully.';
         fi;
 
         echo 'Applying topic retention...';
-        RESPONSE=$$(curl -s -w '\n%{http_code}' -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs \
-          -H 'Content-Type: application/json' \
-          -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}');
+        RESPONSE=$$(curl -s -w '\n%{http_code}' -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs -H 'Content-Type: application/json' -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}');
         echo \"Retention response: $$RESPONSE\";
         echo 'Done.';
       "
