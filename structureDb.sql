@@ -8,3 +8,5 @@ CREATE TABLE IF NOT EXISTS activities (
     elapsed_time INT NOT NULL,  -- en secondes
     details TEXT
 );
+
+CREATE INDEX idx_activities_employee_id ON activities(employee_id)

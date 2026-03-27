@@ -15,7 +15,7 @@ echo "PostgreSQL prêt !"
 
 # Environnement Python
 if [ ! -d "venv" ]; then
-    py -m venv venv
+    python3 -m venv venv
 fi
 
 # Activation venv — détection automatique OS
@@ -29,7 +29,7 @@ fi
 pip install -r requirements.txt
 
 # Génération des tickets
-py -m generate_ticket.main
+python3 -m generate_ticket.main
 
 echo "================================================"
 echo " Pipeline démarré avec succès !"

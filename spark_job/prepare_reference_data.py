@@ -8,7 +8,6 @@ directement dans MinIO — accessible par le driver ET le worker Spark.
 import os
 import boto3
 from config.configuration import SparkSettings
-# a corriger avec les settings de spark dans configuration.py
 
 spark_settings = SparkSettings()
 

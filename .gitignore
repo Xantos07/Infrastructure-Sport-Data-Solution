@@ -1,7 +1,9 @@
 .env
+.env.local
 *__pycache__/
 *.pyc
 .vscode/
+/venv/
 
 debezium.json
 *.pdf

@@ -45,7 +45,17 @@ class DiscordSettings(BaseAppSettings):
 
 
 class TicketGenerationSettings(BaseAppSettings):
-    """Settings pour la génération de tickets (local)."""
+    """Settings pour la génération de tickets (local).
+
+    .env.local (non versionné) surcharge .env — utile pour POSTGRES_HOST=localhost
+    quand generate_ticket tourne hors Docker.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=[str(PROJECT_ROOT / ".env"), str(PROJECT_ROOT / ".env.local")],
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     postgres_user: str
     postgres_password: str

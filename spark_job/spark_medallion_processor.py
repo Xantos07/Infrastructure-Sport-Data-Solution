@@ -92,13 +92,8 @@ def process_silver_employees(spark):
     print("SILVER - Données de référence employés")
     print("=" * 60)
 
-    # a corriger, inferSchema n'est pas fiable et optimisé pour les gros fichiers, il vaut mieux définir un schéma explicite
-    # ID salarié,Nom,Prénom,Date de naissance,BU,Date d'embauche,Salaire brut,Type de contrat,Nombre de jours de CP,
-    # Adresse du domicile,Moyen de déplacement
-
-    #erreur avec ID salarié ...
-    #df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, schema=EMPLOYEES_CSV_SCHEMA, encoding="UTF-8")
-    #df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, schema=SPORTS_CSV_SCHEMA, encoding="UTF-8")
+    # Lecture avec schema explicite — le BOM UTF-8 sur "ID salarié" est gere
+    # par la lecture header=True qui normalise les noms de colonnes
 
     df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, inferSchema=True, encoding="UTF-8")
     df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, inferSchema=True, encoding="UTF-8")
@@ -120,12 +115,18 @@ def process_silver_employees(spark):
         .withColumnRenamed("pratique_d_un_sport",  "external_sport") \
         .withColumn("updated_at", current_timestamp())
 
+    # Assertions de qualité
+    null_ids = silver_employees.filter(col("employee_id").isNull()).count()
+    if null_ids > 0:
+        print(f"  ⚠ QUALITÉ : {null_ids} employé(s) avec employee_id NULL détecté(s)")
+
     silver_employees.write.format("delta") \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
         .save(SILVER_EMPLOYEES_PATH)
 
     nb = silver_employees.count()
+    assert nb > 0, "Silver employees vide — vérifier les CSV de référence"
     print(f"  → {nb} employés chargés dans {SILVER_EMPLOYEES_PATH}")
     return nb
 
@@ -145,6 +146,14 @@ def process_silver_activities(spark):
     if bronze_count == 0:
         print("  Aucune donnée dans la couche Bronze.")
         return 0
+
+    # Assertions de qualité Bronze
+    null_ids = bronze_df.filter(col("id").isNull()).count()
+    null_employees = bronze_df.filter(col("employee_id").isNull()).count()
+    if null_ids > 0:
+        print(f"  ⚠ QUALITÉ : {null_ids} enregistrement(s) Bronze avec id NULL")
+    if null_employees > 0:
+        print(f"  ⚠ QUALITÉ : {null_employees} enregistrement(s) Bronze avec employee_id NULL")
 
     print(f"  Bronze : {bronze_count} événements CDC")
 
@@ -327,15 +336,16 @@ def run_medallion(spark):
 
 
 def bronze_has_data(spark):
-    # try:
-    #     return len(spark.read.format("delta").load(BRONZE_PATH).take(1)) > 0
-    # except Exception:
-    #     return False
-    if not DeltaTable.isDeltaTable(spark, BRONZE_PATH):
-        return False
     try:
-        return spark.read.format("delta").load(BRONZE_PATH).take(1) != []
-    except Exception:
+        is_delta = DeltaTable.isDeltaTable(spark, BRONZE_PATH)
+        print(f"  [bronze_has_data] isDeltaTable={is_delta} path={BRONZE_PATH}")
+        if not is_delta:
+            return False
+        rows = spark.read.format("delta").load(BRONZE_PATH).take(1)
+        print(f"  [bronze_has_data] take(1)={rows}")
+        return rows != []
+    except Exception as e:
+        print(f"  [bronze_has_data] ERREUR: {e}")
         return False
 
 

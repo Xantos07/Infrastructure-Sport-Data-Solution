@@ -85,4 +85,7 @@ com.amazonaws:aws-java-sdk-bundle:1.12.262" \
   --conf "spark.hadoop.fs.s3a.secret.key=${MINIO_PASSWORD}" \
   --conf "spark.hadoop.fs.s3a.path.style.access=true" \
   --conf "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem" \
+  --conf "spark.ui.port=4040" \
+  --conf "spark.ui.prometheus.enabled=true" \
+  --conf "spark.sql.streaming.metricsEnabled=true" \
   /opt/spark/app/spark_consumer.py

@@ -17,8 +17,6 @@ def insert_tickets_batch(tickets: list[ActivityTicket], clean_before_insert: boo
         return
 
     connection = connect()
-    if connection is None:
-        return
 
     try:
         with connection.cursor() as cursor:

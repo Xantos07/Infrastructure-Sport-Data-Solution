@@ -1,43 +1,45 @@
-# name: Tests unitaires python
+name: Tests unitaires python
 
-# on:
-#   pull_request:
-#     branches:
-#       - 'main'
-#       - 'development'
-#   push:
-#     branches:
-#       - 'main'
-#       - 'development'
-#   release:
-#     types: [published] 
+on:
+  pull_request:
+    branches:
+      - 'main'
+      - 'development'
+  push:
+    branches:
+      - 'main'
+      - 'development'
+  release:
+    types: [published]
 
-# jobs:
-#   build:
-#     runs-on: ubuntu-latest
-#     env:
-#       MIN_COVERAGE_REQUIRED: 90
-    
-#     steps:
-#     - name: Checkout repository
-#       uses: actions/checkout@v4
-    
-#     - name: Set up Python 3.13.1
-#       uses: actions/setup-python@v5
-#       with:
-#         python-version: 3.13.1
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MIN_COVERAGE_REQUIRED: 90
 
-#     - name: Install dependencies
-#       run: |
-#         python -m pip install --upgrade pip
-#         pip install -r requirements.txt
-#         pip install coverage
-    
-#     - name: Github Action for testing the code
-#       run: coverage run -m pytest test/unit_test.py -v -s
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-#     - name: Github Action to retrieve coverage percentage
-#       id: total-coverage
-#       run: |
-#         coverage json -q -o /dev/stdout | python -c 'import sys, json; perc_cov = json.load(sys.stdin)["totals"]["percent_covered"]; is_covered = perc_cov >= '$MIN_COVERAGE_REQUIRED'; print("Coverage is: ", perc_cov); sys.exit(not is_covered)'
+    - name: Set up Python 3.13.1
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.13.1
 
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install coverage kafka-python
+
+    - name: Run generate_ticket tests
+      run: coverage run -m pytest generate_ticket/unit_test -v -s
+
+    - name: Run discord_consumer tests
+      run: coverage run --append -m pytest discord_consumer/unit_test -v -s
+
+    - name: Check coverage
+      id: total-coverage
+      run: |
+        coverage json -q -o /dev/stdout | python -c 'import sys, json; perc_cov = json.load(sys.stdin)["totals"]["percent_covered"]; is_covered = perc_cov >= '$MIN_COVERAGE_REQUIRED'; print("Coverage is: ", perc_cov); sys.exit(not is_covered)'

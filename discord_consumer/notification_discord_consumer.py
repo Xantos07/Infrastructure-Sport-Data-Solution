@@ -4,8 +4,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from config.configuration import DiscordSettings
-from config.logger import logger
-from message_processor import get_latest_activity
+from config.logger import get_logger
+
+logger = get_logger("discord_consumer.notifier")
+from message_processor import get_all_activities
 from kafka_consumer import consumer
 
 settings = DiscordSettings()
@@ -33,9 +35,10 @@ def _build_http_session() -> requests.Session:
 HTTP_SESSION = _build_http_session()
 
 
-def send_activity(row: dict) -> None:
+def send_activity(row: dict, total_in_batch: int = 1) -> None:
     distance = row["distance"] or 0
     ts = row["start_timestamp"].strftime("%d/%m/%Y à %H:%M") if row["start_timestamp"] else "date inconnue"
+    batch_note = f"\n*({total_in_batch} activité(s) dans ce lot)*" if total_in_batch > 1 else ""
 
     if row["is_deleted"]:
         embed = {
@@ -51,6 +54,7 @@ def send_activity(row: dict) -> None:
                 f"**Distance :** {distance} m\n"
                 f"**Durée :** {(row['elapsed_time'] or 0) / 60:.1f} min\n"
                 f"**Détails :** {row['details']}"
+                f"{batch_note}"
             ),
             "color": 3066993,
         }
@@ -71,13 +75,17 @@ def main() -> None:
     logger.info(f"Consumer démarré — intervalle : {INTERVAL_SEC}s")
     try:
         while True:
-            activity = get_latest_activity()
-            if activity:
+            activities = get_all_activities()
+            if activities:
+                # On commite tous les offsets (aucun message perdu)
+                consumer.commit()
+                # On envoie uniquement la dernière activité + un résumé du lot
+                latest = activities[-1]
                 try:
-                    send_activity(activity)
-                    consumer.commit()
+                    send_activity(latest, total_in_batch=len(activities))
+                    logger.info(f"Lot de {len(activities)} activité(s) consommé — dernière notifiée sur Discord.")
                 except requests.RequestException as e:
-                    logger.error(f"Échec notification Discord (pas de commit offset): {e}")
+                    logger.error(f"Échec notification Discord : {e}")
             else:
                 logger.info("Aucun nouveau message Kafka.")
 
