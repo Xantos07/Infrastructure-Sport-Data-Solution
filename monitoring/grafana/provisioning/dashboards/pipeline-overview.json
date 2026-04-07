@@ -125,10 +125,10 @@
 
     {
       "id": 4,
-      "title": "Consumer Lag — topic_activities (par groupe)",
+      "title": "Bronze — Messages en retard (Spark Streaming lag)",
       "type": "timeseries",
       "gridPos": { "x": 0, "y": 5, "w": 12, "h": 6 },
-      "description": "Lag = high watermark − offset commité. Un lag croissant indique un consumer qui ne suit plus.",
+      "description": "Messages Kafka non encore traités par le stream Bronze. Spark stocke ses offsets dans le checkpoint MinIO (pas dans Kafka). Un lag croissant indique une ingestion qui ne suit plus.",
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
@@ -141,18 +141,25 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 1000 },
-              { "color": "red", "value": 10000 }
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
             ]
-          }
+          },
+          "color": { "fixedColor": "#FF6B35", "mode": "fixed" }
         }
       },
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "redpanda_kafka_max_offset - on(topic, partition) group_right(group) redpanda_kafka_consumer_group_committed_offset",
-          "legendFormat": "lag group={{group}} partition={{partition}}",
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_offsetsBehindLatest_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Messages en retard",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_inputRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Débit entrant (rows/s)",
+          "refId": "B"
         }
       ]
     },
@@ -299,13 +306,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "metrics_master_activeApps_Value",
+          "expr": "max({__name__=~\"metrics_.*master.*activeApps.*\"})",
           "legendFormat": "Jobs actifs",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus" },
-          "expr": "metrics_master_waitingApps_Value",
+          "expr": "max({__name__=~\"metrics_.*master.*waitingApps.*\"})",
           "legendFormat": "Jobs en attente",
           "refId": "B"
         }
@@ -388,13 +395,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "metrics_master_activeApps_Value",
+          "expr": "max({__name__=~\"metrics_.*master.*activeApps.*\"})",
           "legendFormat": "Apps actives",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus" },
-          "expr": "metrics_master_waitingApps_Value",
+          "expr": "max({__name__=~\"metrics_.*master.*waitingApps.*\"})",
           "legendFormat": "Apps en attente",
           "refId": "B"
         }
@@ -412,10 +419,10 @@
 
     {
       "id": 13,
-      "title": "Lag total — Consumer groups (toutes partitions)",
+      "title": "Bronze — Batch duration & throughput",
       "type": "bargauge",
       "gridPos": { "x": 0, "y": 17, "w": 8, "h": 5 },
-      "description": "Somme du lag par consumer group. Debezium doit rester proche de 0 après ingestion.",
+      "description": "Durée du dernier micro-batch Bronze et débit de traitement. Un batch > 30s indique un retard.",
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "orientation": "horizontal",
@@ -428,8 +435,8 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 500 },
-              { "color": "red", "value": 5000 }
+              { "color": "yellow", "value": 20000 },
+              { "color": "red", "value": 30000 }
             ]
           }
         }
@@ -437,9 +444,15 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum by (group) (redpanda_kafka_max_offset - on(topic, partition) group_right(group) redpanda_kafka_consumer_group_committed_offset)",
-          "legendFormat": "{{group}}",
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_latency_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Latence batch (ms)",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_processingRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Débit (rows/s)",
+          "refId": "B"
         }
       ]
     },

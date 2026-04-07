@@ -78,7 +78,7 @@ class SparkSettings(BaseAppSettings):
 
     bootstrap_servers: str = "redpanda-0:9092"
     kafka_topic: str = "topic_activities.public.activities"
-    kafka_starting_offsets: str = "latest"
+    kafka_starting_offsets: str = "earliest"
 
     minio_base_url: str
     minio_user: str

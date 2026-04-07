@@ -264,9 +264,9 @@
 
     {
       "id": 11,
-      "title": "Bronze — Consumer lag (Kafka vs Delta Lake)",
+      "title": "Bronze — Débit ingestion (rows/s)",
       "type": "timeseries",
-      "description": "Décalage entre les messages Redpanda et ce qui est consommé par Bronze. Doit tendre vers 0 après ingestion.",
+      "description": "Lignes entrantes vs traitées par le stream Bronze. Quand inputRate = processingRate et que les deux tombent à 0, tout a été ingéré.",
       "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
@@ -274,24 +274,29 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "rps",
           "custom": { "lineWidth": 2, "fillOpacity": 8 },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 100 },
-              { "color": "red", "value": 1000 }
-            ]
-          }
+          "color": { "mode": "palette-classic" }
         }
       },
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_offsetsBehindLatest_Value\", job=\"spark-bronze\"})",
-          "legendFormat": "Messages en retard",
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_inputRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes entrantes / s",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_processingRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes traitées / s",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_numInputRows_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Rows par batch",
+          "refId": "C"
         }
       ]
     },
@@ -397,13 +402,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum(metrics_executor_totalInputBytes{job=\"spark-silver-gold-exec\"})",
+          "expr": "sum(metrics_executor_totalInputBytes_bytes_total{job=\"spark-silver-gold-exec\"})",
           "legendFormat": "Bytes lus (cumul)",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum(metrics_executor_totalShuffleWrite{job=\"spark-silver-gold-exec\"})",
+          "expr": "sum(metrics_executor_totalShuffleWrite_bytes_total{job=\"spark-silver-gold-exec\"})",
           "legendFormat": "Shuffle écrits (cumul)",
           "refId": "B"
         }
@@ -466,9 +471,15 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum({__name__=~\"metrics_.*_driver_threadpool_activeTasks_Value\", job=\"spark-silver-gold\"})",
+          "expr": "sum(metrics_executor_activeTasks{job=\"spark-silver-gold-exec\"})",
           "legendFormat": "Tasks actives",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_completedTasks{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Tasks complétées (cumul)",
+          "refId": "B"
         }
       ]
     },
@@ -498,8 +509,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum(rate({__name__=~\"metrics_.*_driver_jvm_.*_CollectionTime_Value\", job=\"spark-bronze\"}[1m]))",
-          "legendFormat": "GC time Bronze",
+          "expr": "increase((sum({__name__=~\"metrics_.*_driver_jvm_.*_time_Value\", job=\"spark-bronze\"}))[1m])",
+          "legendFormat": "GC time Bronze (ms / 1min)",
           "refId": "A"
         }
       ]
@@ -521,8 +532,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "sum(rate({__name__=~\"metrics_.*_driver_jvm_.*_CollectionTime_Value\", job=\"spark-silver-gold\"}[1m]))",
-          "legendFormat": "GC time Silver/Gold",
+          "expr": "increase((sum({__name__=~\"metrics_.*_driver_jvm_.*_time_Value\", job=\"spark-silver-gold\"}))[1m])",
+          "legendFormat": "GC time Silver/Gold (ms / 1min)",
           "refId": "A"
         }
       ]

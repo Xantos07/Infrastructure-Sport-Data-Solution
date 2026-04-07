@@ -26,11 +26,9 @@ from pyspark.sql.functions import (
     col, row_number, desc, current_timestamp, when, lit, count,
     sum as spark_sum, coalesce as spark_coalesce
 )
-from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 from config.configuration import SparkSettings
-from schemas import EMPLOYEES_CSV_SCHEMA, SPORTS_CSV_SCHEMA
 
 # ============================================================
 # Chemins Delta Lake — MinIO (s3a://)
@@ -174,7 +172,6 @@ def process_silver_activities(spark):
         col("__deleted"),
         when(col("sport_type").startswith("Déplacement au travail"), lit(True))
             .otherwise(lit(False)).alias("is_commute"),
-        current_timestamp().alias("updated_at")
     )
 
     if DeltaTable.isDeltaTable(spark, SILVER_ACTIVITIES_PATH):
@@ -186,7 +183,18 @@ def process_silver_activities(spark):
         ).whenMatchedDelete(
             condition="new.__deleted = 'true'"
         ).whenMatchedUpdate(
-            condition="new.__deleted IS NULL OR new.__deleted != 'true'",
+            # Seulement si une colonne métier a réellement changé — évite les réécritures inutiles
+            condition="""
+                (new.__deleted IS NULL OR new.__deleted != 'true') AND (
+                    silver.employee_id    != new.employee_id    OR
+                    silver.start_datetime != new.start_datetime OR
+                    silver.sport_type     != new.sport_type     OR
+                    silver.distance       != new.distance        OR
+                    silver.elapsed_time   != new.elapsed_time    OR
+                    silver.details        != new.details          OR
+                    silver.is_commute     != new.is_commute
+                )
+            """,
             set={
                 "employee_id":    "new.employee_id",
                 "start_datetime": "new.start_datetime",
@@ -195,7 +203,7 @@ def process_silver_activities(spark):
                 "elapsed_time":   "new.elapsed_time",
                 "details":        "new.details",
                 "is_commute":     "new.is_commute",
-                "updated_at":     "new.updated_at"
+                "updated_at":     "current_timestamp()"
             }
         ).whenNotMatchedInsert(
             condition="new.__deleted IS NULL OR new.__deleted != 'true'",
@@ -208,7 +216,7 @@ def process_silver_activities(spark):
                 "elapsed_time":   "new.elapsed_time",
                 "details":        "new.details",
                 "is_commute":     "new.is_commute",
-                "updated_at":     "new.updated_at"
+                "updated_at":     "current_timestamp()"
             }
         ).execute()
 
@@ -323,13 +331,46 @@ def process_gold(spark):
 # PIPELINE
 # ============================================================
 
+def get_bronze_count(spark) -> int:
+    """Retourne le nombre de lignes dans Bronze, ou -1 si inexistant.
+
+    Delta Lake résout ce count via les statistiques du transaction log
+    (pas de scan fichier) — opération rapide.
+    """
+    try:
+        if not DeltaTable.isDeltaTable(spark, BRONZE_PATH):
+            return -1
+        return spark.read.format("delta").load(BRONZE_PATH).count()
+    except Exception:
+        return -1
+
+
+_last_bronze_count: int = -2  # sentinel : jamais traité
+
+
 def run_medallion(spark):
+    global _last_bronze_count
     print("\n" + "#" * 60)
     print("#  MEDALLION PIPELINE — Bronze → Silver → Gold")
     print("#" * 60)
+
+    current_count = get_bronze_count(spark)
+
+    if current_count < 0:
+        print("  Bronze inexistante ou vide — pipeline ignoré.")
+        print("#" * 60)
+        return
+
+    if current_count == _last_bronze_count:
+        print(f"  Aucun nouveau ticket Bronze ({current_count} lignes, inchangé) — pipeline ignoré.")
+        print("#" * 60)
+        return
+
+    print(f"  Bronze : {_last_bronze_count if _last_bronze_count >= 0 else '?'} → {current_count} lignes")
     process_silver_employees(spark)
     process_silver_activities(spark)
     process_gold(spark)
+    _last_bronze_count = current_count
     print("\n" + "#" * 60)
     print("#  PIPELINE TERMINÉ")
     print("#" * 60)
