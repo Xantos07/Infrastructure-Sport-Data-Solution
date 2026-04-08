@@ -88,4 +88,4 @@ com.amazonaws:aws-java-sdk-bundle:1.12.262" \
   --conf "spark.ui.port=4040" \
   --conf "spark.ui.prometheus.enabled=true" \
   --conf "spark.sql.streaming.metricsEnabled=true" \
-  /opt/spark/app/spark_consumer.py
+  /opt/spark/app/bronze_processor.py

@@ -27,8 +27,11 @@ COPY config/ ./config/
 # Copie des scripts pipeline
 COPY spark_job/prepare_reference_data.py .
 COPY spark_job/schemas.py .
-COPY spark_job/spark_consumer.py .
 COPY spark_job/spark_medallion_processor.py .
+COPY spark_job/medallion_processor/bronze_processor.py .
+COPY spark_job/medallion_processor/silver_processor.py .
+COPY spark_job/medallion_processor/gold_processor.py .
+COPY spark_job/medallion_layer.py .
 COPY spark_job/requirements.txt .
 COPY spark_job/entrypoint_silver_gold.sh .
 COPY spark_job/entrypoint_bronze.sh .
