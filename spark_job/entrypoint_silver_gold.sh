@@ -72,6 +72,8 @@ python3 /opt/spark/app/prepare_reference_data.py
 
 export PYTHONPATH="/opt/spark/app:${PYTHONPATH}"
 
+# duplication de code avec le bronze sh
+
 exec /opt/spark/bin/spark-submit \
   --master "${SPARK_MASTER}" \
   --packages "io.delta:delta-spark_2.12:3.2.0,\

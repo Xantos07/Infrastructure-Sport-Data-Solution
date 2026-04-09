@@ -22,186 +22,34 @@ import argparse
 import time
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col, row_number, desc, current_timestamp, when, lit, count,
-    sum as spark_sum, coalesce as spark_coalesce
-)
-from pyspark.sql.window import Window
-from delta.tables import DeltaTable
 from config.configuration import SparkSettings
 from medallion_processor.silver_activity_processor import SilverActivityProcessor
 from medallion_processor.silver_employees_processor import SilverEmployeesProcessor
+from medallion_processor.gold_processor import GoldProcessor
+from services.bronze_monitor import BronzeMonitor
 
-# ============================================================
-# Chemins Delta Lake — MinIO (s3a://)
-# ============================================================
 spark_settings = SparkSettings()
-BRONZE_PATH            = spark_settings.delta_bronze_path
-
-SILVER_ACTIVITIES_PATH = spark_settings.delta_silver_activities
-SILVER_EMPLOYEES_PATH  = spark_settings.delta_silver_employees
-
-GOLD_ELIGIBILITY_PATH  = spark_settings.delta_gold_eligibility
-
-# ============================================================
-# Sorties Parquet pour Power BI Desktop — MinIO (s3a://)
-# S3A gère l'overwrite proprement, pas besoin de suppression manuelle
-# ============================================================
-POWERBI_ELIGIBILITY = spark_settings.powerbi_eligibility
-POWERBI_ACTIVITIES  = spark_settings.powerbi_activities
-
-# ============================================================
-# Données de référence (CSV montés via volume Docker)
-# ============================================================
-REF_EMPLOYEES_CSV = spark_settings.delta_input_employees
-REF_SPORTS_CSV    = spark_settings.delta_input_sports
-# ============================================================
-# Règles métier — seuils d'éligibilité (stables, pas de taux)
-# Les taux financiers (ex: 5% prime) sont gérés dans Power BI
-# via What-If Parameters pour pouvoir les modifier en démo.
-# ============================================================
-SPORT_TRANSPORT_MODES   = ["Marche/running", "Vélo/Trottinette/Autres"]
-MIN_ACTIVITIES_WELLNESS = 15
-
-
-def create_spark_session():
-    """Crée une session Spark avec support Delta Lake + MinIO"""
-
-    return SparkSession.builder \
-        .appName("Medallion Processor - Bronze/Silver/Gold") \
-        .config("spark.sql.adaptive.enabled", "false") \
-        .config("spark.sql.shuffle.partitions", "2") \
-        .config("spark.default.parallelism", "2") \
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-        .config("spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-        .config("spark.hadoop.fs.s3a.endpoint", spark_settings.minio_base_url) \
-        .config("spark.hadoop.fs.s3a.access.key", spark_settings.minio_user) \
-        .config("spark.hadoop.fs.s3a.secret.key", spark_settings.minio_password) \
-        .config("spark.hadoop.fs.s3a.path.style.access", "true") \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .getOrCreate()
-
-# ============================================================
-# GOLD LAYER
-# ============================================================
-
-def process_gold(spark):
-    print("\n" + "=" * 60)
-    print("GOLD - Éligibilité des employés")
-    print("=" * 60)
-
-    try:
-        activities = spark.read.format("delta").load(SILVER_ACTIVITIES_PATH)
-        employees  = spark.read.format("delta").load(SILVER_EMPLOYEES_PATH)
-    except Exception as e:
-        print(f"  Données Silver manquantes : {e}")
-        return 0
-
-    activity_stats = activities.groupBy("employee_id").agg(
-        count("*").alias("total_activities"),
-        spark_sum(when(col("is_commute") == True, 1).otherwise(0)).alias("total_commute_activities"),
-        spark_sum(when(col("is_commute") == False, 1).otherwise(0)).alias("total_external_activities"),
-        spark_sum(spark_coalesce(col("distance"),     lit(0))).alias("total_distance_m"),
-        spark_sum(spark_coalesce(col("elapsed_time"), lit(0))).alias("total_elapsed_time_s")
-    )
-
-    gold_df = employees.join(activity_stats, on="employee_id", how="left") \
-        .fillna(0, subset=[
-            "total_activities", "total_commute_activities",
-            "total_external_activities", "total_distance_m", "total_elapsed_time_s"
-        ])
-
-    # Règle 1 : Prime sportive — MONTANT calculé dans Power BI (What-If Parameter)
-    gold_df = gold_df.withColumn(
-        "is_eligible_prime_sportive",
-        when(
-            (col("transport_mode").isin(SPORT_TRANSPORT_MODES)) &
-            (col("total_commute_activities") > 0),
-            lit(True)
-        ).otherwise(lit(False))
-    )
-
-    # Règle 2 : Journées bien-être — NOMBRE de journées paramétrable dans Power BI
-    gold_df = gold_df.withColumn(
-        "is_eligible_journees_bien_etre",
-        when(
-            col("total_external_activities") >= MIN_ACTIVITIES_WELLNESS,
-            lit(True)
-        ).otherwise(lit(False))
-    ).withColumn("computed_at", current_timestamp())
-
-    gold_final = gold_df.select(
-        "employee_id",
-        "nom",
-        "prenom",
-        "bu",
-        "type_de_contrat",
-        "transport_mode",
-        "external_sport",
-        "salaire_brut",                    # fait brut → Prime = salaire_brut * [taux PBI]
-        "total_activities",
-        "total_commute_activities",
-        "total_external_activities",
-        "total_distance_m",
-        "total_elapsed_time_s",
-        "is_eligible_prime_sportive",      # booléen d'éligibilité
-        "is_eligible_journees_bien_etre",  # booléen d'éligibilité
-        "computed_at"
-    )
-
-    # Écriture Gold Delta Lake (MinIO)
-    gold_final.write.format("delta") \
-        .mode("overwrite") \
-        .option("overwriteSchema", "true") \
-        .save(GOLD_ELIGIBILITY_PATH)
-
-    # Export Parquet Power BI (MinIO) — S3A gère l'overwrite, pas de suppression manuelle
-    gold_final.write.mode("overwrite").parquet(POWERBI_ELIGIBILITY)
-    activities.write.mode("overwrite").parquet(POWERBI_ACTIVITIES)
-
-    gold_count        = gold_final.count()
-    eligible_prime    = gold_final.filter(col("is_eligible_prime_sportive") == True).count()
-    eligible_wellness = gold_final.filter(col("is_eligible_journees_bien_etre") == True).count()
-
-    print(f"  → {gold_count} employés traités → {GOLD_ELIGIBILITY_PATH}")
-    print(f"  ├── Éligibles prime sportive                        : {eligible_prime} / {gold_count}")
-    print(f"  ├── Éligibles journées bien-être (≥{MIN_ACTIVITIES_WELLNESS} activités) : {eligible_wellness} / {gold_count}")
-    print(f"  └── Parquet Power BI : {POWERBI_ELIGIBILITY}")
-    print(f"                        {POWERBI_ACTIVITIES}")
-    print(f"  ℹ  Montant prime = salaire_brut × [Taux What-If] — calculé dans Power BI")
-
-    return gold_count
-
+BRONZE_PATH = spark_settings.delta_bronze_path
 
 # ============================================================
 # PIPELINE
 # ============================================================
 
-def get_bronze_count(spark) -> int:
-    """Retourne le nombre de lignes dans Bronze, ou -1 si inexistant.
+# mettre une logique de nettoyage interne à silver
+# c'est generate ticket qui nettoie mais si on change de source de données
+# on se retrouvera avec des données sales dans bronze puis silver
 
-    Delta Lake résout ce count via les statistiques du transaction log
-    (pas de scan fichier) — opération rapide.
-    """
-    try:
-        if not DeltaTable.isDeltaTable(spark, BRONZE_PATH):
-            return -1
-        return spark.read.format("delta").load(BRONZE_PATH).count()
-    except Exception:
-        return -1
-
-
+# a refacto pas tres propre
 _last_bronze_count: int = -2  # sentinel : jamais traité
 
 
-def run_medallion(spark):
+def run_medallion(spark, monitor):
     global _last_bronze_count
     print("\n" + "#" * 60)
     print("#  MEDALLION PIPELINE — Bronze → Silver → Gold")
     print("#" * 60)
 
-    current_count = get_bronze_count(spark)
+    current_count = monitor.get_bronze_count()
 
     if current_count < 0:
         print("  Bronze inexistante ou vide — pipeline ignoré.")
@@ -216,43 +64,11 @@ def run_medallion(spark):
     print(f"  Bronze : {_last_bronze_count if _last_bronze_count >= 0 else '?'} → {current_count} lignes")
     SilverActivityProcessor(spark, spark_settings).run()
     SilverEmployeesProcessor(spark, spark_settings).run()
-    process_gold(spark)
+    GoldProcessor(spark, spark_settings).run()
     _last_bronze_count = current_count
     print("\n" + "#" * 60)
     print("#  PIPELINE TERMINÉ")
     print("#" * 60)
-
-
-def bronze_has_data(spark):
-    try:
-        is_delta = DeltaTable.isDeltaTable(spark, BRONZE_PATH)
-        print(f"  [bronze_has_data] isDeltaTable={is_delta} path={BRONZE_PATH}")
-        if not is_delta:
-            return False
-        rows = spark.read.format("delta").load(BRONZE_PATH).take(1)
-        print(f"  [bronze_has_data] take(1)={rows}")
-        return rows != []
-    except Exception as e:
-        print(f"  [bronze_has_data] ERREUR: {e}")
-        return False
-
-
-def wait_for_bronze_data(spark, timeout_seconds, interval_seconds):
-    print(f"Attente Bronze : path={BRONZE_PATH}")
-    deadline = None if timeout_seconds <= 0 else time.time() + timeout_seconds
-
-    while True:
-        if bronze_has_data(spark):
-            print("Bronze prête : au moins 1 enregistrement détecté.")
-            return True
-
-        if deadline is not None and time.time() >= deadline:
-            print(f"Timeout Bronze atteint ({timeout_seconds}s) sans donnée.")
-            return False
-
-        print(f"Bronze vide/non disponible, nouvelle vérification dans {interval_seconds}s...")
-        time.sleep(interval_seconds)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Medallion Processor : Bronze → Silver → Gold")
@@ -263,15 +79,18 @@ def main():
     parser.add_argument("--bronze-wait-interval", type=int, default=5)
     args = parser.parse_args()
 
-    spark = create_spark_session()
+    spark = SparkSession.builder \
+    .appName("Medallion Processor - Silver/Gold") \
+    .getOrCreate()
 
+    monitor = BronzeMonitor(spark, BRONZE_PATH)
+    
     try:
         if args.mode == "single":
-            run_medallion(spark)
+            run_medallion(spark, monitor)
         else:
             if args.wait_bronze:
-                ready = wait_for_bronze_data(
-                    spark,
+                ready = monitor.wait_for_bronze_data(
                     timeout_seconds=args.bronze_wait_timeout,
                     interval_seconds=args.bronze_wait_interval,
                 )
@@ -280,7 +99,7 @@ def main():
 
             print(f"Mode watch : traitement toutes les {args.interval}s (Ctrl+C pour arrêter)")
             while True:
-                run_medallion(spark)
+                run_medallion(spark, monitor)
                 print(f"\nProchain traitement dans {args.interval}s...")
                 time.sleep(args.interval)
     except KeyboardInterrupt:

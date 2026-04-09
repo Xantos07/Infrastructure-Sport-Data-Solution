@@ -128,12 +128,3 @@ class SilverActivityProcessor(BaseSilverProcessor):
             
         df_transformed = self.transform(df_bronze)
         self.write_silver(df_transformed)
-
-if __name__ == "__main__":
-    settings = SparkSettings()
-    spark = SparkSession.builder \
-        .appName("Silver activity - Bronze to Silver") \
-        .getOrCreate()
-
-    processor = SilverActivityProcessor(spark, settings)
-    processor.run()

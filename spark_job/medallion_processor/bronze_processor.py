@@ -58,7 +58,6 @@ class BronzeProcessor(MedallionLayer):
         self.console_monitoring(transformed_df)
         self.spark.streams.awaitAnyTermination()
 
-
 if __name__ == "__main__":
     settings = SparkSettings()
     spark = SparkSession.builder \

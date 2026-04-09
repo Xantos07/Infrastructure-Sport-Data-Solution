@@ -6,6 +6,7 @@ from pyspark.sql.functions import (
     col, row_number, desc, current_timestamp, when, lit, count,
     sum as spark_sum, coalesce as spark_coalesce
 )
+from schemas import EMPLOYEES_CSV_SCHEMA, SPORTS_CSV_SCHEMA
 
 # il faut une partie commune de silver puis :
 # - une partie employees
@@ -17,10 +18,21 @@ class SilverEmployeesProcessor(BaseSilverProcessor):
 
     # mettre dans bronze pour creer un delta ABSOLUMENT !
     def reader_csv(self):
-        df_employees = self.spark.read.csv(self.settings.delta_input_employees, header=True, inferSchema=True, encoding="UTF-8")
-        df_sports    = self.spark.read.csv(self.settings.delta_input_sports,    header=True, inferSchema=True, encoding="UTF-8")
+        csv_options = {"header": "true", "encoding": "UTF-8", "quote": '"', "escape": '"'}
+        
+        df_employees = self.spark.read \
+            .schema(EMPLOYEES_CSV_SCHEMA) \
+            .options(**csv_options) \
+            .csv(self.settings.delta_input_employees)
+        
+        df_sports = self.spark.read \
+            .schema(SPORTS_CSV_SCHEMA) \
+            .options(**csv_options) \
+            .csv(self.settings.delta_input_sports)
+        
         df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
         return df_ref
+
     
     def cleanse(self, df):
         return super().cleanse(df)
@@ -38,8 +50,7 @@ class SilverEmployeesProcessor(BaseSilverProcessor):
 
     def check_data_quality(self, df):
         null_count = self.null_employee_id_count(df)
-        # Isoler la logique de qualité des données
-        null_count = df.filter(col("employee_id").isNull()).count()
+
         if null_count > 0:
             print(f"⚠️  Attention : {null_count} enregistrements ont un employee_id null.")
             df.filter(col("employee_id").isNull()).show(10, truncate=False)
@@ -57,12 +68,3 @@ class SilverEmployeesProcessor(BaseSilverProcessor):
         self.check_data_quality(df_silver)
         self.writing(df_silver, self.settings.delta_silver_employees)
         df_silver.unpersist()
-
-if __name__ == "__main__":
-    settings = SparkSettings()
-    spark = SparkSession.builder \
-        .appName("Silver employees - Bronze to Silver") \
-        .getOrCreate()
-
-    processor = SilverEmployeesProcessor(spark, settings)
-    processor.run()

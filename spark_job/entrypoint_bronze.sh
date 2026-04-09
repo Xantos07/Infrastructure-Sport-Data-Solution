@@ -56,7 +56,6 @@ wait_for_tcp_service(){
   echo "${name} is reachable on ${host}:${port}!"
 }
 
-# pas de sleep ! 
 MINIO_BASE_URL=$(normalize_http_endpoint "${MINIO_ENDPOINT}")
 SPARK_MASTER_ADDR=$(extract_host_port "${SPARK_MASTER}")
 SPARK_MASTER_HOST=${SPARK_MASTER_ADDR%%:*}
@@ -68,6 +67,7 @@ wait_for_http_service "http://${SPARK_MASTER_HOST}:8080" "Spark Master UI"
 
 export PYTHONPATH="/opt/spark/app:${PYTHONPATH}"
 
+# duplication de code avec le silver gold sh
 exec /opt/spark/bin/spark-submit \
   --master "${SPARK_MASTER}" \
   --packages "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,\

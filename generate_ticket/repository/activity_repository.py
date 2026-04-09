@@ -45,5 +45,6 @@ def insert_tickets_batch(tickets: list[ActivityTicket], clean_before_insert: boo
     except Exception as e:
         connection.rollback()
         logger.error(f"Erreur lors de l'insertion batch : {e}")
+        raise
     finally:
         connection.close()
