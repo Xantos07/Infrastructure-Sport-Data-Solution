@@ -89,11 +89,16 @@ class SparkSettings(BaseAppSettings):
     CSV_SPORT: str = "/opt/spark/app/inputs/sports.csv"
 
     delta_bronze_path: str = "s3a://delta-lake/bronze/activities"
+
+    delta_silver_path: str = "s3a://delta-lake/silver"
     delta_silver_activities: str = "s3a://delta-lake/silver/activities"
     delta_silver_employees: str = "s3a://delta-lake/silver/employees"
+
     delta_gold_eligibility: str = "s3a://delta-lake/gold/employee_eligibility"
+
     powerbi_eligibility: str = "s3a://powerbi/employee_eligibility.parquet"
     powerbi_activities: str = "s3a://powerbi/activities.parquet"
+    
     checkpoint_bronze: str = "s3a://delta-lake/checkpoints/bronze_activities"
     delta_bronze_console_checkpoint_path: str = "s3a://delta-lake/checkpoints/bronze_console"
     

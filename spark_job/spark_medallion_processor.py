@@ -29,6 +29,8 @@ from pyspark.sql.functions import (
 from pyspark.sql.window import Window
 from delta.tables import DeltaTable
 from config.configuration import SparkSettings
+from medallion_processor.silver_activity_processor import SilverActivityProcessor
+from medallion_processor.silver_employees_processor import SilverEmployeesProcessor
 
 # ============================================================
 # Chemins Delta Lake — MinIO (s3a://)
@@ -79,161 +81,6 @@ def create_spark_session():
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
         .getOrCreate()
-
-
-# ============================================================
-# SILVER LAYER
-# ============================================================
-
-def process_silver_employees(spark):
-    print("\n" + "=" * 60)
-    print("SILVER - Données de référence employés")
-    print("=" * 60)
-
-    # Lecture avec schema explicite — le BOM UTF-8 sur "ID salarié" est gere
-    # par la lecture header=True qui normalise les noms de colonnes
-
-    df_employees = spark.read.csv(REF_EMPLOYEES_CSV, header=True, inferSchema=True, encoding="UTF-8")
-    df_sports    = spark.read.csv(REF_SPORTS_CSV,    header=True, inferSchema=True, encoding="UTF-8")
-    df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
-
-    def normalize_column_name(name):
-        import unicodedata
-        name = unicodedata.normalize('NFD', name)
-        name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
-        name = name.replace(' ', '_').replace("'", '_').replace('é', 'e').replace('è', 'e')
-        return name.lower()
-
-    for old_col in df_ref.columns:
-        df_ref = df_ref.withColumnRenamed(old_col, normalize_column_name(old_col))
-
-    silver_employees = df_ref \
-        .withColumnRenamed("id_salarie",          "employee_id") \
-        .withColumnRenamed("moyen_de_deplacement", "transport_mode") \
-        .withColumnRenamed("pratique_d_un_sport",  "external_sport") \
-        .withColumn("updated_at", current_timestamp())
-
-    # Assertions de qualité
-    null_ids = silver_employees.filter(col("employee_id").isNull()).count()
-    if null_ids > 0:
-        print(f"  ⚠ QUALITÉ : {null_ids} employé(s) avec employee_id NULL détecté(s)")
-
-    silver_employees.write.format("delta") \
-        .mode("overwrite") \
-        .option("overwriteSchema", "true") \
-        .save(SILVER_EMPLOYEES_PATH)
-
-    nb = silver_employees.count()
-    assert nb > 0, "Silver employees vide — vérifier les CSV de référence"
-    print(f"  → {nb} employés chargés dans {SILVER_EMPLOYEES_PATH}")
-    return nb
-
-
-def process_silver_activities(spark):
-    print("\n" + "=" * 60)
-    print("SILVER - Traitement Bronze → Silver (activités)")
-    print("=" * 60)
-
-    try:
-        bronze_df = spark.read.format("delta").load(BRONZE_PATH)
-    except Exception as e:
-        print(f"  Aucune donnée Bronze trouvée : {e}")
-        return 0
-
-    bronze_count = bronze_df.count()
-    if bronze_count == 0:
-        print("  Aucune donnée dans la couche Bronze.")
-        return 0
-
-    # Assertions de qualité Bronze
-    null_ids = bronze_df.filter(col("id").isNull()).count()
-    null_employees = bronze_df.filter(col("employee_id").isNull()).count()
-    if null_ids > 0:
-        print(f"  ⚠ QUALITÉ : {null_ids} enregistrement(s) Bronze avec id NULL")
-    if null_employees > 0:
-        print(f"  ⚠ QUALITÉ : {null_employees} enregistrement(s) Bronze avec employee_id NULL")
-
-    print(f"  Bronze : {bronze_count} événements CDC")
-
-    window = Window.partitionBy("id").orderBy(desc("ingested_at"))
-    latest_df = bronze_df \
-        .withColumn("rn", row_number().over(window)) \
-        .filter("rn = 1") \
-        .drop("rn")
-
-    silver_data = latest_df.select(
-        col("id"),
-        col("employee_id"),
-        col("start_datetime"),
-        col("sport_type"),
-        col("distance"),
-        col("elapsed_time"),
-        col("details"),
-        col("__deleted"),
-        when(col("sport_type").startswith("Déplacement au travail"), lit(True))
-            .otherwise(lit(False)).alias("is_commute"),
-    )
-
-    if DeltaTable.isDeltaTable(spark, SILVER_ACTIVITIES_PATH):
-        silver_table = DeltaTable.forPath(spark, SILVER_ACTIVITIES_PATH)
-
-        silver_table.alias("silver").merge(
-            silver_data.alias("new"),
-            "silver.id = new.id"
-        ).whenMatchedDelete(
-            condition="new.__deleted = 'true'"
-        ).whenMatchedUpdate(
-            # Seulement si une colonne métier a réellement changé — évite les réécritures inutiles
-            condition="""
-                (new.__deleted IS NULL OR new.__deleted != 'true') AND (
-                    silver.employee_id    != new.employee_id    OR
-                    silver.start_datetime != new.start_datetime OR
-                    silver.sport_type     != new.sport_type     OR
-                    silver.distance       != new.distance        OR
-                    silver.elapsed_time   != new.elapsed_time    OR
-                    silver.details        != new.details          OR
-                    silver.is_commute     != new.is_commute
-                )
-            """,
-            set={
-                "employee_id":    "new.employee_id",
-                "start_datetime": "new.start_datetime",
-                "sport_type":     "new.sport_type",
-                "distance":       "new.distance",
-                "elapsed_time":   "new.elapsed_time",
-                "details":        "new.details",
-                "is_commute":     "new.is_commute",
-                "updated_at":     "current_timestamp()"
-            }
-        ).whenNotMatchedInsert(
-            condition="new.__deleted IS NULL OR new.__deleted != 'true'",
-            values={
-                "id":             "new.id",
-                "employee_id":    "new.employee_id",
-                "start_datetime": "new.start_datetime",
-                "sport_type":     "new.sport_type",
-                "distance":       "new.distance",
-                "elapsed_time":   "new.elapsed_time",
-                "details":        "new.details",
-                "is_commute":     "new.is_commute",
-                "updated_at":     "current_timestamp()"
-            }
-        ).execute()
-
-        result_count = spark.read.format("delta").load(SILVER_ACTIVITIES_PATH).count()
-        print(f"  → Silver activities (MERGE) : {result_count} activités → {SILVER_ACTIVITIES_PATH}")
-    else:
-        active_data = silver_data.filter(
-            col("__deleted").isNull() | (col("__deleted") != "true")
-        ).drop("__deleted")
-
-        active_data.write.format("delta").mode("overwrite").save(SILVER_ACTIVITIES_PATH)
-
-        result_count = active_data.count()
-        print(f"  → Silver activities (initial) : {result_count} activités → {SILVER_ACTIVITIES_PATH}")
-
-    return result_count
-
 
 # ============================================================
 # GOLD LAYER
@@ -367,8 +214,8 @@ def run_medallion(spark):
         return
 
     print(f"  Bronze : {_last_bronze_count if _last_bronze_count >= 0 else '?'} → {current_count} lignes")
-    process_silver_employees(spark)
-    process_silver_activities(spark)
+    SilverActivityProcessor(spark, spark_settings).run()
+    SilverEmployeesProcessor(spark, spark_settings).run()
     process_gold(spark)
     _last_bronze_count = current_count
     print("\n" + "#" * 60)

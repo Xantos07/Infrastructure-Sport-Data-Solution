@@ -24,14 +24,14 @@ RUN python3 -m pip install --no-cache-dir -r requirements.txt
 # Copie du module de configuration partage
 COPY config/ ./config/
 
+# Copie des packages Python (structure preservée)
+COPY spark_job/medallion_processor/ ./medallion_processor/
+COPY spark_job/services/ ./services/
+
 # Copie des scripts pipeline
 COPY spark_job/prepare_reference_data.py .
 COPY spark_job/schemas.py .
 COPY spark_job/spark_medallion_processor.py .
-COPY spark_job/medallion_processor/bronze_processor.py .
-COPY spark_job/medallion_processor/silver_processor.py .
-COPY spark_job/medallion_processor/gold_processor.py .
-COPY spark_job/medallion_layer.py .
 COPY spark_job/requirements.txt .
 COPY spark_job/entrypoint_silver_gold.sh .
 COPY spark_job/entrypoint_bronze.sh .

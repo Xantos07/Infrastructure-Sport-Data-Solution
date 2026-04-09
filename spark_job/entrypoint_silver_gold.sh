@@ -70,6 +70,8 @@ wait_for_http_service "http://${SPARK_MASTER_HOST}:8080" "Spark Master UI"
 # Les CSV sont écrits sur s3a:// pour être accessibles par driver ET worker
 python3 /opt/spark/app/prepare_reference_data.py
 
+export PYTHONPATH="/opt/spark/app:${PYTHONPATH}"
+
 exec /opt/spark/bin/spark-submit \
   --master "${SPARK_MASTER}" \
   --packages "io.delta:delta-spark_2.12:3.2.0,\

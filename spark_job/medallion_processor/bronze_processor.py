@@ -1,4 +1,4 @@
-from spark_job.medallion_processor.medallion_layer import MedallionLayer
+from medallion_processor.medallion_layer import MedallionLayer
 from schemas import ACTIVITY_DEBEZIUM_SCHEMA
 from pyspark.sql.functions import from_json, col, from_unixtime, current_timestamp
 from pyspark.sql import SparkSession

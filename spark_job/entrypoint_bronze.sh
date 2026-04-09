@@ -66,6 +66,8 @@ wait_for_http_service "${MINIO_BASE_URL}/minio/health/live" "MinIO"
 wait_for_tcp_service "${SPARK_MASTER_HOST}" "${SPARK_MASTER_PORT}" "Spark Master RPC"
 wait_for_http_service "http://${SPARK_MASTER_HOST}:8080" "Spark Master UI"
 
+export PYTHONPATH="/opt/spark/app:${PYTHONPATH}"
+
 exec /opt/spark/bin/spark-submit \
   --master "${SPARK_MASTER}" \
   --packages "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,\
@@ -88,4 +90,4 @@ com.amazonaws:aws-java-sdk-bundle:1.12.262" \
   --conf "spark.ui.port=4040" \
   --conf "spark.ui.prometheus.enabled=true" \
   --conf "spark.sql.streaming.metricsEnabled=true" \
-  /opt/spark/app/bronze_processor.py
+  /opt/spark/app/medallion_processor/bronze_processor.py
