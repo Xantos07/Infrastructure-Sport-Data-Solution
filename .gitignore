@@ -1,8 +1,10 @@
 .env
+.env.local
 *__pycache__/
 *.pyc
 .vscode/
-database.ini
+/venv/
+
 debezium.json
 *.pdf
 .secrets
@@ -11,7 +13,3 @@ note.md
 
 powerbi_data/
 *.pbix
-
-# CSV générés depuis Excel (prepare_reference_data.py)
-Inputs/employees.csv
-Inputs/sports.csv

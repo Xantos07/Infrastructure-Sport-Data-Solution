@@ -1,9 +1,5 @@
-/* docker exec -it postgres psql -U user -d mydatabase */
-/* \d */
-/* Get-Content structureDb.sql | docker exec -i postgres psql -U user -d mydatabase */
-
 -- Table: activities pour stocker les activités des employés qui vont être transformés en tickets
-CREATE TABLE activities (
+CREATE TABLE IF NOT EXISTS activities (
     id SERIAL PRIMARY KEY,
     employee_id INT NOT NULL,
     start_timestamp TIMESTAMP NOT NULL,
@@ -12,3 +8,5 @@ CREATE TABLE activities (
     elapsed_time INT NOT NULL,  -- en secondes
     details TEXT
 );
+
+CREATE INDEX idx_activities_employee_id ON activities(employee_id)

@@ -1,0 +1,533 @@
+{
+  "title": "Data Pipeline — Overview",
+  "uid": "pipeline-overview",
+  "tags": ["redpanda", "spark", "debezium", "pipeline"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Services UP",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } }, "type": "value" }
+          ],
+          "min": 0, "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up{job=\"redpanda\"}",
+          "legendFormat": "Redpanda",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up{job=\"spark-master\"}",
+          "legendFormat": "Spark Master",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up{job=\"spark-worker\"}",
+          "legendFormat": "Spark Worker",
+          "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 2,
+      "title": "Redpanda — Requêtes Kafka / s",
+      "type": "timeseries",
+      "gridPos": { "x": 6, "y": 0, "w": 9, "h": 4 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "rate(vectorized_kafka_handler_requests_completed_total[1m])",
+          "legendFormat": "Requêtes/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "rate(vectorized_kafka_rpc_received_bytes[1m])",
+          "legendFormat": "Bytes in/s",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "title": "Redpanda — Bytes Out / s",
+      "type": "timeseries",
+      "gridPos": { "x": 15, "y": 0, "w": 9, "h": 4 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "rate(vectorized_kafka_rpc_sent_bytes[1m])",
+          "legendFormat": "Bytes out/s",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "title": "── REDPANDA ──────────────────────────────────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 4,
+      "title": "Bronze — Messages en retard (Spark Streaming lag)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 6 },
+      "description": "Messages Kafka non encore traités par le stream Bronze. Spark stocke ses offsets dans le checkpoint MinIO (pas dans Kafka). Un lag croissant indique une ingestion qui ne suit plus.",
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 8 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          },
+          "color": { "fixedColor": "#FF6B35", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_offsetsBehindLatest_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Messages en retard",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_inputRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Débit entrant (rows/s)",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "title": "Redpanda — Partitions actives / Under-replicated",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 5, "w": 6, "h": 6 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Partitions actives" },
+            "properties": [
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "count(vectorized_cluster_partition_under_replicated_replicas == 0)",
+          "legendFormat": "Partitions actives",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(vectorized_cluster_partition_under_replicated_replicas)",
+          "legendFormat": "Under-replicated",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 6,
+      "title": "Redpanda — Latence Kafka (p99 / p50)",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 5, "w": 6, "h": 6 },
+      "description": "Latence des requêtes Kafka. Une latence élevée impacte Debezium.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "µs",
+          "custom": { "lineWidth": 2, "fillOpacity": 8 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "histogram_quantile(0.99, rate(vectorized_kafka_rpc_dispatch_handler_latency_bucket[5m]))",
+          "legendFormat": "p99 latency",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "histogram_quantile(0.50, rate(vectorized_kafka_rpc_dispatch_handler_latency_bucket[5m]))",
+          "legendFormat": "p50 latency",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "title": "── SPARK ─────────────────────────────────────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 11, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 7,
+      "title": "Spark Master — Workers enregistrés",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 12, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_master_aliveWorkers_Value",
+          "legendFormat": "Workers UP",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 8,
+      "title": "Spark Master — Jobs actifs / en attente",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 12, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "max({__name__=~\"metrics_.*master.*activeApps.*\"})",
+          "legendFormat": "Jobs actifs",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "max({__name__=~\"metrics_.*master.*waitingApps.*\"})",
+          "legendFormat": "Jobs en attente",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 9,
+      "title": "Spark Worker — Mémoire utilisée",
+      "type": "gauge",
+      "gridPos": { "x": 8, "y": 12, "w": 5, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_memUsed_MB_Value * 1024 * 1024",
+          "legendFormat": "Mémoire utilisée",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "Spark Worker — CPU cores utilisés",
+      "type": "timeseries",
+      "gridPos": { "x": 13, "y": 12, "w": 5, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 15 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_coresUsed_Value",
+          "legendFormat": "Cores utilisés",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_coresFree_Value",
+          "legendFormat": "Cores libres",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "title": "Spark — Apps actives / en attente",
+      "type": "timeseries",
+      "gridPos": { "x": 18, "y": 12, "w": 6, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "max({__name__=~\"metrics_.*master.*activeApps.*\"})",
+          "legendFormat": "Apps actives",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "max({__name__=~\"metrics_.*master.*waitingApps.*\"})",
+          "legendFormat": "Apps en attente",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 30,
+      "title": "── PIPELINE SANTÉ ────────────────────────────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 16, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 13,
+      "title": "Bronze — Batch duration & throughput",
+      "type": "bargauge",
+      "gridPos": { "x": 0, "y": 17, "w": 8, "h": 5 },
+      "description": "Durée du dernier micro-batch Bronze et débit de traitement. Un batch > 30s indique un retard.",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20000 },
+              { "color": "red", "value": 30000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_latency_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Latence batch (ms)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_processingRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Débit (rows/s)",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 14,
+      "title": "Scrape targets — dernière collecte réussie",
+      "type": "table",
+      "gridPos": { "x": 8, "y": 17, "w": 8, "h": 5 },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Value", "desc": false }]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "displayMode": "color-background" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } }, "type": "value" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up",
+          "legendFormat": "{{job}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        { "id": "labelsToFields", "options": { "valueLabel": "job" } },
+        { "id": "organize", "options": { "renameByName": { "Value": "Status", "job": "Service" } } }
+      ]
+    },
+
+    {
+      "id": 15,
+      "title": "Redpanda — Requêtes en erreur (rate/1m)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 17, "w": 8, "h": 5 },
+      "description": "Requêtes Kafka en erreur. Toute valeur non nulle mérite attention.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "drawStyle": "bars"
+          },
+          "color": { "fixedColor": "red", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "rate(vectorized_kafka_handler_requests_errored_total[1m])",
+          "legendFormat": "Requêtes en erreur/s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "rate(vectorized_kafka_rpc_corrupted_headers[1m])",
+          "legendFormat": "Headers corrompus/s",
+          "refId": "B"
+        }
+      ]
+    }
+
+  ]
+}
