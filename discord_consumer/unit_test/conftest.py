@@ -6,12 +6,13 @@ car kafka_consumer instancie un KafkaConsumer a l'import.
 Configure les variables d'environnement requises par DiscordSettings.
 """
 
+import os
 import sys
 from unittest.mock import MagicMock
-from config.configuration import DiscordSettings
 
-DiscordSettings().bootstrap_servers = "localhost:9092"
-DiscordSettings().kafka_topic = "test-topic"
+os.environ.setdefault("bootstrap_servers", "localhost:9092")
+os.environ.setdefault("kafka_topic", "test-topic")
+os.environ.setdefault("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test")
 
 # Mock kafka_consumer 
 _mock_kafka_module = MagicMock()
