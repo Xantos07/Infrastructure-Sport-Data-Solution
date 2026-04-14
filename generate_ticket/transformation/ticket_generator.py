@@ -79,14 +79,14 @@ def _generate_for_employee(
     if mode == "both":
         mode = "sport" if _rng.random() < 0.5 else "transport"
 
-    # Ticket déplacement au travail
+    # Ticket Commute to work
     if mode == "transport" and employee["transport_mode"] in TRANSPORT_MODES:
         distance = int(_rng.integers(1000, 10000))
         elapsed = int(_rng.integers(15, 60)) * 60  # en secondes
         tickets.append(ActivityTicket(
             employee_id=int(selected_id),
             start_time=_random_commute_datetime(),
-            sport_type=f"Déplacement au travail - {employee['transport_mode']}",
+            sport_type=f"Commute to work - {employee['transport_mode']}",
             distance_meters=distance,
             elapsed_time_seconds=elapsed,
             details=str(_rng.choice(COMMENTAIRES_TRANSPORT)),

@@ -1,304 +1,328 @@
-"""Tests unitaires pour les transformations Silver et Gold du Medallion Processor.
+"""Tests unitaires de la logique métier du pipeline Medallion.
 
-Teste la logique metier (deduplication, eligibilite, agregation, normalisation)
-en Python pur. Les transformations Spark reproduisent cette meme logique
-sur des DataFrames distribues.
+Structure identique à generate_ticket/unit_test/ :
+  - les fonctions testées sont importées depuis le code de production
+  - aucune logique n'est réimplémentée dans ce fichier
+  - un changement dans business_rules.py fait échouer les tests concernés
+
+Couverture :
+  - normalize_column_name          (services/services.py)
+  - is_commute                     (services/business_rules.py)
+  - is_active_cdc                  (services/business_rules.py)
+  - validate_record                (services/business_rules.py)
+  - is_eligible_prime_sportive     (services/business_rules.py)
+  - is_eligible_journees_bien_etre (services/business_rules.py)
+  - SPORT_TRANSPORT_MODES          (medallion_processor/gold_processor.py)
+  - MIN_ACTIVITIES_WELLNESS        (medallion_processor/gold_processor.py)
 """
 
-import pytest
-from datetime import datetime
-from collections import defaultdict
+import sys
+from pathlib import Path
+# --- Résolution des chemins d'import ----------------------------------------
+_SPARK_JOB = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = _SPARK_JOB.parent
+for _p in [str(_SPARK_JOB), str(_PROJECT_ROOT)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+# --- Imports depuis le code de production ------------------------------------
+from services.services import normalize_column_name
+from services.business_rules import (
+    COMMUTE_PREFIX,
+    DISTANCE_LIMITS_BY_SPORT,
+    is_commute,
+    is_active_cdc,
+    validate_record,
+    is_eligible_prime_sportive,
+    is_eligible_journees_bien_etre,
+)
+from medallion_processor.gold_processor import SPORT_TRANSPORT_MODES, MIN_ACTIVITIES_WELLNESS
 
 
 # ============================================================
-# SILVER LAYER — Deduplication
+# 1. Normalisation des colonnes CSV
 # ============================================================
 
-class TestSilverDeduplication:
-    """Teste la logique de deduplication Bronze -> Silver :
-    garder le record avec le ingested_at le plus recent par id."""
+class TestNormalizeColumnName:
+    """services.services.normalize_column_name"""
 
-    @staticmethod
-    def _dedup(records):
-        """Reproduit la logique Window.partitionBy('id').orderBy(desc('ingested_at'))."""
-        latest = {}
-        for r in records:
-            rid = r["id"]
-            if rid not in latest or r["ingested_at"] > latest[rid]["ingested_at"]:
-                latest[rid] = r
-        return list(latest.values())
+    def test_id_salarie(self):
+        assert normalize_column_name("ID salarié") == "id_salarie"
 
-    def test_keeps_latest_by_ingested_at(self):
-        records = [
-            {"id": 1, "employee_id": 10, "details": "v1", "distance": 5000,
-             "ingested_at": datetime(2026, 1, 1, 12, 0)},
-            {"id": 1, "employee_id": 10, "details": "v2", "distance": 6000,
-             "ingested_at": datetime(2026, 1, 1, 14, 0)},
-        ]
-        result = self._dedup(records)
-        assert len(result) == 1
-        assert result[0]["details"] == "v2"
-        assert result[0]["distance"] == 6000
+    def test_moyen_deplacement(self):
+        assert normalize_column_name("Moyen de déplacement") == "moyen_de_deplacement"
 
-    def test_handles_multiple_ids(self):
-        records = [
-            {"id": 1, "employee_id": 10, "ingested_at": datetime(2026, 1, 1, 12, 0)},
-            {"id": 1, "employee_id": 10, "ingested_at": datetime(2026, 1, 1, 14, 0)},
-            {"id": 2, "employee_id": 20, "ingested_at": datetime(2026, 1, 1, 12, 0)},
-            {"id": 2, "employee_id": 20, "ingested_at": datetime(2026, 1, 1, 15, 0)},
-            {"id": 3, "employee_id": 30, "ingested_at": datetime(2026, 1, 1, 12, 0)},
-        ]
-        result = self._dedup(records)
-        assert len(result) == 3
+    def test_pratique_sport(self):
+        assert normalize_column_name("Pratique d'un sport") == "pratique_d_un_sport"
 
-    def test_single_record_unchanged(self):
-        records = [{"id": 1, "employee_id": 10, "ingested_at": datetime(2026, 1, 1)}]
-        result = self._dedup(records)
-        assert len(result) == 1
+    def test_date_naissance(self):
+        assert normalize_column_name("Date de naissance") == "date_de_naissance"
 
-    def test_empty_returns_empty(self):
-        assert self._dedup([]) == []
+    def test_salaire_brut(self):
+        assert normalize_column_name("Salaire brut") == "salaire_brut"
+
+    def test_date_embauche(self):
+        assert normalize_column_name("Date d'embauche") == "date_d_embauche"
 
 
 # ============================================================
-# SILVER LAYER — is_commute
+# 2. Silver — règle is_commute
 # ============================================================
 
-class TestSilverIsCommute:
-    """Teste le calcul du champ is_commute :
-    True si sport_type commence par 'Deplacement au travail'."""
+class TestIsCommute:
+    """services.business_rules.is_commute — utilise COMMUTE_PREFIX importé."""
 
-    @staticmethod
-    def is_commute(sport_type):
-        return sport_type.startswith("Déplacement au travail") if sport_type else False
+    def test_marche(self):
+        assert is_commute(f"{COMMUTE_PREFIX} - Marche") is True
 
-    def test_commute_marche(self):
-        assert self.is_commute("Déplacement au travail - Marche") is True
+    def test_velo(self):
+        assert is_commute(f"{COMMUTE_PREFIX} - Vélo") is True
 
-    def test_commute_velo(self):
-        assert self.is_commute("Déplacement au travail - Vélo") is True
+    def test_prefix_seul(self):
+        assert is_commute(COMMUTE_PREFIX) is True
 
-    def test_not_commute_running(self):
-        assert self.is_commute("Running") is False
+    def test_running_non_commute(self):
+        assert is_commute("Running") is False
 
-    def test_not_commute_natation(self):
-        assert self.is_commute("Natation") is False
+    def test_natation_non_commute(self):
+        assert is_commute("Natation") is False
 
-    def test_not_commute_tennis(self):
-        assert self.is_commute("Tennis") is False
+    def test_randonnee_non_commute(self):
+        assert is_commute("Randonnée") is False
 
-    def test_not_commute_randonnee(self):
-        assert self.is_commute("Randonnée") is False
+    def test_none_non_commute(self):
+        assert is_commute(None) is False
+
+    def test_empty_string_non_commute(self):
+        assert is_commute("") is False
 
 
 # ============================================================
-# SILVER LAYER — Filtrage des deletes CDC
+# 3. Silver — filtrage CDC (__deleted Debezium)
 # ============================================================
 
-class TestSilverDeleteHandling:
-    """Teste le filtrage des records supprimes via le flag __deleted de Debezium."""
-
-    @staticmethod
-    def is_active(deleted_flag):
-        """Reproduit : col('__deleted').isNull() | (col('__deleted') != 'true')"""
-        return deleted_flag is None or deleted_flag != "true"
+class TestCDCDeleteHandling:
+    """services.business_rules.is_active_cdc"""
 
     def test_none_is_active(self):
-        assert self.is_active(None) is True
+        assert is_active_cdc(None) is True
 
     def test_false_string_is_active(self):
-        assert self.is_active("false") is True
+        assert is_active_cdc("false") is True
 
-    def test_true_is_deleted(self):
-        assert self.is_active("true") is False
+    def test_true_string_is_deleted(self):
+        assert is_active_cdc("true") is False
 
-    def test_filters_deleted_records(self):
+    def test_filters_mix_of_records(self):
         records = [
             {"id": 1, "__deleted": None},
             {"id": 2, "__deleted": "true"},
             {"id": 3, "__deleted": "false"},
         ]
-        active = [r for r in records if self.is_active(r["__deleted"])]
-        assert len(active) == 2
-        ids = [r["id"] for r in active]
-        assert 1 in ids
-        assert 3 in ids
-        assert 2 not in ids
+        active_ids = [r["id"] for r in records if is_active_cdc(r["__deleted"])]
+        assert active_ids == [1, 3]
 
     def test_all_deleted_returns_empty(self):
-        records = [
-            {"id": 1, "__deleted": "true"},
-            {"id": 2, "__deleted": "true"},
-        ]
-        active = [r for r in records if self.is_active(r["__deleted"])]
-        assert len(active) == 0
+        records = [{"id": i, "__deleted": "true"} for i in range(5)]
+        assert [r for r in records if is_active_cdc(r["__deleted"])] == []
 
 
 # ============================================================
-# GOLD LAYER — Agregation
+# 4. Silver — validation qualité (DataQualityProcessor)
 # ============================================================
 
-class TestGoldAggregation:
-    """Teste l'agregation des activites par employe."""
+class TestValidateRecord:
+    """services.business_rules.validate_record — miroir de DataQualityProcessor.validate()"""
 
-    @staticmethod
-    def _aggregate(activities):
-        """Reproduit le groupBy('employee_id').agg(count, sum...)."""
-        stats = defaultdict(lambda: {
-            "total_activities": 0, "total_commute": 0, "total_external": 0,
-            "total_distance_m": 0, "total_elapsed_time_s": 0
-        })
-        for a in activities:
-            eid = a["employee_id"]
-            stats[eid]["total_activities"] += 1
-            if a["is_commute"]:
-                stats[eid]["total_commute"] += 1
-            else:
-                stats[eid]["total_external"] += 1
-            stats[eid]["total_distance_m"] += a.get("distance") or 0
-            stats[eid]["total_elapsed_time_s"] += a.get("elapsed_time") or 0
-        return dict(stats)
+    def test_valid_record_has_no_violations(self):
+        record = {
+            "id": 1,
+            "employee_id": 10,
+            "sport_type": "Running",
+            "elapsed_time": 1800,
+            "start_datetime": "2026-01-01 08:00",
+            "distance": 5000,
+        }
+        assert validate_record(record) == []
 
-    def test_counts_by_employee(self):
-        activities = [
-            {"employee_id": 10, "is_commute": True, "distance": 5000, "elapsed_time": 1800},
-            {"employee_id": 10, "is_commute": True, "distance": 6000, "elapsed_time": 2000},
-            {"employee_id": 10, "is_commute": False, "distance": 3000, "elapsed_time": 900},
-            {"employee_id": 20, "is_commute": False, "distance": 1000, "elapsed_time": 600},
-            {"employee_id": 20, "is_commute": False, "distance": 2000, "elapsed_time": 1200},
-        ]
-        stats = self._aggregate(activities)
-        assert stats[10]["total_activities"] == 3
-        assert stats[10]["total_commute"] == 2
-        assert stats[10]["total_external"] == 1
-        assert stats[10]["total_distance_m"] == 14000
-        assert stats[20]["total_activities"] == 2
-        assert stats[20]["total_commute"] == 0
-        assert stats[20]["total_external"] == 2
+    def test_id_null_detected(self):
+        record = {
+            "id": None, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": 1800, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "id_null" in validate_record(record)
 
-    def test_handles_none_distance(self):
-        activities = [
-            {"employee_id": 10, "is_commute": False, "distance": None, "elapsed_time": 1800},
-        ]
-        stats = self._aggregate(activities)
-        assert stats[10]["total_distance_m"] == 0
-        assert stats[10]["total_elapsed_time_s"] == 1800
+    def test_employee_id_null_detected(self):
+        record = {
+            "id": 1, "employee_id": None, "sport_type": "Running",
+            "elapsed_time": 1800, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "employee_id_null" in validate_record(record)
 
-    def test_empty_activities(self):
-        stats = self._aggregate([])
-        assert len(stats) == 0
+    def test_sport_type_null_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": None,
+            "elapsed_time": 1800, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "sport_type_null" in validate_record(record)
 
+    def test_sport_type_empty_string_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "",
+            "elapsed_time": 1800, "start_datetime": "2026-01-01", "distance": None,
+        }
+        assert "sport_type_null" in validate_record(record)
 
-class TestGoldFillna:
-    """Teste que les employes sans activites ont des metriques a 0 (left join + fillna)."""
+    def test_elapsed_time_zero_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": 0, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "elapsed_time_invalid" in validate_record(record)
 
-    def test_fillna_for_missing_employee(self):
-        employees = [10, 20, 30]
-        activity_stats = {10: {"total": 5, "commute": 3, "external": 2}}
+    def test_elapsed_time_negative_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": -300, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "elapsed_time_invalid" in validate_record(record)
 
-        for eid in employees:
-            s = activity_stats.get(eid, {})
-            total = s.get("total", 0)
-            commute = s.get("commute", 0)
-            external = s.get("external", 0)
-            assert isinstance(total, int)
-            assert isinstance(commute, int)
-            assert isinstance(external, int)
+    def test_elapsed_time_null_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": None, "start_datetime": "2026-01-01", "distance": 5000,
+        }
+        assert "elapsed_time_invalid" in validate_record(record)
 
-        assert activity_stats.get(20, {}).get("total", 0) == 0
-        assert activity_stats.get(30, {}).get("total", 0) == 0
+    def test_start_datetime_null_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": 1800, "start_datetime": None, "distance": 5000,
+        }
+        assert "start_datetime_null" in validate_record(record)
+
+    def test_distance_negative_detected(self):
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Running",
+            "elapsed_time": 1800, "start_datetime": "2026-01-01", "distance": -100,
+        }
+        assert "distance_negative" in validate_record(record)
+
+    def test_distance_none_is_valid(self):
+        """None est autorisé pour les sports sans distance mesurable."""
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Tennis",
+            "elapsed_time": 3600, "start_datetime": "2026-01-01", "distance": None,
+        }
+        assert validate_record(record) == []
+
+    def test_distance_outlier_detected_per_sport(self):
+        """Distance > seuil pour chaque sport dans DISTANCE_LIMITS_BY_SPORT → outlier détecté."""
+        for sport_key, max_dist in DISTANCE_LIMITS_BY_SPORT.items():
+            label = "distance_outlier_" + sport_key.split("/")[0].lower().replace(" ", "_")
+            record = {
+                "id": 1, "employee_id": 10,
+                "sport_type": f"{COMMUTE_PREFIX} - {sport_key}",
+                "elapsed_time": 3600, "start_datetime": "2026-01-01",
+                "distance": max_dist + 1,
+            }
+            assert label in validate_record(record), f"Outlier non détecté pour {sport_key}"
+
+    def test_distance_at_limit_is_valid(self):
+        """Distance exactement au seuil → pas d'outlier (seuil exclu)."""
+        for sport_key, max_dist in DISTANCE_LIMITS_BY_SPORT.items():
+            record = {
+                "id": 1, "employee_id": 10,
+                "sport_type": f"{COMMUTE_PREFIX} - {sport_key}",
+                "elapsed_time": 3600, "start_datetime": "2026-01-01",
+                "distance": max_dist,
+            }
+            violations = validate_record(record)
+            outlier_violations = [v for v in violations if v.startswith("distance_outlier")]
+            assert outlier_violations == [], f"Faux positif au seuil exact pour {sport_key}"
+
+    def test_distance_outlier_not_triggered_for_other_sports(self):
+        """Un sport sans seuil défini ne déclenche pas d'outlier, quelle que soit la distance."""
+        record = {
+            "id": 1, "employee_id": 10, "sport_type": "Natation",
+            "elapsed_time": 3600, "start_datetime": "2026-01-01", "distance": 999_999,
+        }
+        outlier_violations = [v for v in validate_record(record) if v.startswith("distance_outlier")]
+        assert outlier_violations == []
+
+    def test_multiple_violations_all_reported(self):
+        """Un record peut avoir plusieurs violations simultanées."""
+        record = {
+            "id": None, "employee_id": None, "sport_type": None,
+            "elapsed_time": 0, "start_datetime": None, "distance": -1,
+        }
+        violations = validate_record(record)
+        assert "id_null" in violations
+        assert "employee_id_null" in violations
+        assert "sport_type_null" in violations
+        assert "elapsed_time_invalid" in violations
+        assert "start_datetime_null" in violations
+        assert "distance_negative" in violations
 
 
 # ============================================================
-# GOLD LAYER — Regles d'eligibilite
+# 5. Gold — règles d'éligibilité
 # ============================================================
 
-class TestGoldEligibility:
-    """Teste les regles d'eligibilite metier."""
+class TestEligibilityRules:
+    """services.business_rules — constantes importées depuis gold_processor."""
 
-    SPORT_TRANSPORT_MODES = ["Marche/running", "Vélo/Trottinette/Autres"]
-    MIN_ACTIVITIES_WELLNESS = 15
+    # --- Prime sportive ---
 
-    def _is_eligible_prime(self, transport_mode, total_commute):
-        """Reproduit la regle Prime sportive du Gold layer."""
-        return transport_mode in self.SPORT_TRANSPORT_MODES and total_commute > 0
-
-    def _is_eligible_wellness(self, total_external):
-        """Reproduit la regle Journees bien-etre du Gold layer."""
-        return total_external >= self.MIN_ACTIVITIES_WELLNESS
-
-    # Prime sportive
     def test_prime_eligible_marche(self):
-        assert self._is_eligible_prime("Marche/running", 5) is True
+        assert is_eligible_prime_sportive("Marche/running", 5) is True
 
     def test_prime_eligible_velo(self):
-        assert self._is_eligible_prime("Vélo/Trottinette/Autres", 1) is True
+        assert is_eligible_prime_sportive("Vélo/Trottinette/Autres", 1) is True
 
-    def test_prime_wrong_transport(self):
-        assert self._is_eligible_prime("Transports en commun", 3) is False
+    def test_prime_ineligible_wrong_transport(self):
+        assert is_eligible_prime_sportive("Transports en commun", 3) is False
 
-    def test_prime_zero_commute(self):
-        assert self._is_eligible_prime("Marche/running", 0) is False
+    def test_prime_ineligible_vehicule_thermique(self):
+        assert is_eligible_prime_sportive("véhicule thermique/électrique", 10) is False
 
-    def test_prime_vehicule_thermique(self):
-        assert self._is_eligible_prime("véhicule thermique/électrique", 10) is False
+    def test_prime_ineligible_zero_commute(self):
+        assert is_eligible_prime_sportive("Marche/running", 0) is False
 
-    # Journees bien-etre
-    def test_wellness_exactly_15(self):
-        assert self._is_eligible_wellness(15) is True
+    def test_prime_ineligible_none_transport(self):
+        assert is_eligible_prime_sportive(None, 5) is False
 
-    def test_wellness_below(self):
-        assert self._is_eligible_wellness(14) is False
+    # --- Journées bien-être ---
 
-    def test_wellness_above(self):
-        assert self._is_eligible_wellness(20) is True
+    def test_wellness_eligible_above_threshold(self):
+        assert is_eligible_journees_bien_etre(MIN_ACTIVITIES_WELLNESS + 1) is True
 
-    def test_wellness_zero(self):
-        assert self._is_eligible_wellness(0) is False
+    def test_wellness_eligible_at_threshold(self):
+        assert is_eligible_journees_bien_etre(MIN_ACTIVITIES_WELLNESS) is True
 
-    # Double eligibilite
+    def test_wellness_ineligible_below_threshold(self):
+        assert is_eligible_journees_bien_etre(MIN_ACTIVITIES_WELLNESS - 1) is False
+
+    def test_wellness_ineligible_zero(self):
+        assert is_eligible_journees_bien_etre(0) is False
+
+    # --- Double éligibilité ---
+
     def test_both_eligible(self):
-        assert self._is_eligible_prime("Marche/running", 5) is True
-        assert self._is_eligible_wellness(20) is True
+        assert is_eligible_prime_sportive("Marche/running", 5) is True
+        assert is_eligible_journees_bien_etre(MIN_ACTIVITIES_WELLNESS) is True
 
     def test_neither_eligible(self):
-        assert self._is_eligible_prime("Transports en commun", 0) is False
-        assert self._is_eligible_wellness(3) is False
+        assert is_eligible_prime_sportive("Transports en commun", 0) is False
+        assert is_eligible_journees_bien_etre(3) is False
 
+    # --- Cohérence des constantes avec le code de production ---
 
-# ============================================================
-# Normalisation des noms de colonnes
-# ============================================================
+    def test_transport_modes_contient_marche(self):
+        assert "Marche/running" in SPORT_TRANSPORT_MODES
 
-class TestColumnNormalization:
-    """Teste la normalisation des noms de colonnes CSV (accents, espaces)."""
+    def test_transport_modes_contient_velo(self):
+        assert "Vélo/Trottinette/Autres" in SPORT_TRANSPORT_MODES
 
-    @staticmethod
-    def normalize_column_name(name):
-        """Reproduit la fonction normalize_column_name du medallion processor."""
-        import unicodedata
-        name = unicodedata.normalize('NFD', name)
-        name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
-        name = name.replace(' ', '_').replace("'", '_').replace('é', 'e').replace('è', 'e')
-        return name.lower()
-
-    def test_id_salarie(self):
-        assert self.normalize_column_name("ID salarié") == "id_salarie"
-
-    def test_moyen_deplacement(self):
-        assert self.normalize_column_name("Moyen de déplacement") == "moyen_de_deplacement"
-
-    def test_pratique_sport(self):
-        assert self.normalize_column_name("Pratique d'un sport") == "pratique_d_un_sport"
-
-    def test_date_naissance(self):
-        assert self.normalize_column_name("Date de naissance") == "date_de_naissance"
-
-    def test_salaire_brut(self):
-        assert self.normalize_column_name("Salaire brut") == "salaire_brut"
-
-    def test_simple_name(self):
-        assert self.normalize_column_name("Nom") == "nom"
-
-    def test_date_embauche(self):
-        assert self.normalize_column_name("Date d'embauche") == "date_d_embauche"
+    def test_seuil_bien_etre_est_15(self):
+        assert MIN_ACTIVITIES_WELLNESS == 15

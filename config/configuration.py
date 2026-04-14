@@ -96,6 +96,10 @@ class SparkSettings(BaseAppSettings):
     # ===== powerbi data clean =====
     powerbi_eligibility: str = "s3a://powerbi/employee_eligibility.parquet"
     powerbi_activities: str = "s3a://powerbi/activities.parquet"
+
+    # ===== Quarantaine (données invalides) =====
+    delta_quarantine_activities: str = "s3a://delta-lake/quarantine/activities"
+    powerbi_quarantine: str = "s3a://powerbi/quarantine_activities.parquet"
     
     # ===== Checkpoints =====
     checkpoint_bronze: str = "s3a://delta-lake/checkpoints/bronze_activities"

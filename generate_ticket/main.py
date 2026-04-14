@@ -33,6 +33,11 @@ class PipelineResult:
 def main() -> PipelineResult:
     """Exécute le pipeline ETL et retourne un résumé."""
     try:
+
+        # il faut générer de bon tickets mais aussi des tickets "pourris" 
+        # pour tester le pipeline dans son ensemble et pas seulement la 
+        # partie generate_ticket (ex: tickets clean, tickets avec des données manquantes, etc.)
+
         # 1. Ingestion
         df = load_employee_data()
 

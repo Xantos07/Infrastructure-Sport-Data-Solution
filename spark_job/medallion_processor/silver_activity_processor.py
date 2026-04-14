@@ -1,6 +1,8 @@
 from pyspark.sql import SparkSession, Window
 from config.configuration import SparkSettings
 from medallion_processor.base_silver_processor import BaseSilverProcessor
+from medallion_processor.data_quality_processor import DataQualityProcessor
+from services.business_rules import COMMUTE_PREFIX
 from pyspark.sql.functions import (
     col, row_number, desc, current_timestamp, when, lit
 )
@@ -49,7 +51,7 @@ class SilverActivityProcessor(BaseSilverProcessor):
             col("elapsed_time"),
             col("details"),
             col("__deleted"),
-            when(col("sport_type").startswith("Déplacement au travail"), lit(True))
+            when(col("sport_type").startswith(COMMUTE_PREFIX), lit(True))
                 .otherwise(lit(False)).alias("is_commute"),
         )
         return silver_df
@@ -116,15 +118,26 @@ class SilverActivityProcessor(BaseSilverProcessor):
             result_count = active_data.count()
             print(f"  → Silver activities (initial) : {result_count} activités")
      
-    def run(self): 
+    def run(self):
         self.log_step("SILVER - Préparation des données d'activité")
-        
-        # Le flux est maintenant parfaitement ordonné
+
         df_bronze = self.reader()
-        
-        # Si la vérification retourne False (0 ligne), on arrête le traitement ici
+
         if not self.quality_checks(df_bronze):
-            return 
-            
-        df_transformed = self.transform(df_bronze)
+            return
+
+        # ── Validation qualité : sépare clean / quarantaine ──────────────────
+        dq = DataQualityProcessor(self.spark, self.settings)
+
+        df_clean, df_quarantine = dq.validate(df_bronze)
+
+        # Vérification intégrité référentielle (si Silver employees existe)
+        df_clean, df_orphans = dq.check_referential_integrity(df_clean)
+
+        # Fusion des deux flux invalides → une seule table quarantaine
+        df_all_rejected = df_quarantine.unionByName(df_orphans, allowMissingColumns=True)
+        dq.write_quarantine(df_all_rejected)
+
+        # ── Pipeline normal sur les données propres uniquement ────────────────
+        df_transformed = self.transform(df_clean)
         self.write_silver(df_transformed)
