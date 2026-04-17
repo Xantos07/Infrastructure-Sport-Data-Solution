@@ -1,8 +1,10 @@
 from medallion_processor.medallion_layer import MedallionLayer
-from schemas import ACTIVITY_DEBEZIUM_SCHEMA
+from schemas import ACTIVITY_DEBEZIUM_SCHEMA, EMPLOYEES_CSV_SCHEMA, SPORTS_CSV_SCHEMA
 from pyspark.sql.functions import from_json, col, from_unixtime, current_timestamp
 from pyspark.sql import SparkSession
 from config.configuration import SparkSettings
+from services.services import normalize_column_name
+from delta import DeltaTable
 
 class BronzeProcessor(MedallionLayer):
     def __init__(self, spark_session, settings, name="Bronze Processor"):
@@ -17,6 +19,30 @@ class BronzeProcessor(MedallionLayer):
             .option("subscribe", self.settings.kafka_topic) \
             .option("startingOffsets", self.settings.kafka_starting_offsets) \
             .load()
+
+    
+    def _csv_to_delta(self):
+        if DeltaTable.isDeltaTable(self.spark, self.settings.delta_reference_data_path):
+            print("  Reference data Delta already exists — CSV conversion ignorée.")
+            return
+
+        csv_options = {"header": "true", "encoding": "UTF-8", "quote": '"', "escape": '"'}
+
+        df_employees = self.spark.read \
+            .schema(EMPLOYEES_CSV_SCHEMA) \
+            .options(**csv_options) \
+            .csv(self.settings.delta_input_employees)
+
+        df_sports = self.spark.read \
+            .schema(SPORTS_CSV_SCHEMA) \
+            .options(**csv_options) \
+            .csv(self.settings.delta_input_sports)
+
+        df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
+        for c in df_ref.columns:
+            df_ref = df_ref.withColumnRenamed(c, normalize_column_name(c))
+        df_ref.write.format("delta").mode("overwrite").save(self.settings.delta_reference_data_path)
+        print("  Reference data écrite dans Delta.")
 
     def _transform(self, df):
         activities_df = df.select(
@@ -52,6 +78,7 @@ class BronzeProcessor(MedallionLayer):
 
     def run(self):
         self.log_step("BRONZE - Ingestion et Nettoyage")
+        self._csv_to_delta()
         df = self.reader()
         transformed_df = self._transform(df)
         self.writer(transformed_df)

@@ -23,7 +23,7 @@ MINIO_PASSWORD = spark_settings.minio_password
 BUCKET         = spark_settings.minio_bucket
 
 
-
+# En réalité il devrait etre directement dans S3 pas monté dans le volume pour ensuite etre dans minio (S3)
 def upload_csv_file_to_minio(file_path, key):
     s3 = boto3.client(
         "s3",

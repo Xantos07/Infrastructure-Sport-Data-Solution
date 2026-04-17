@@ -85,23 +85,30 @@ class SparkSettings(BaseAppSettings):
     minio_password: str
     minio_bucket: str = "delta-lake"
 
-    CSV_EMPLOYEES: str = "/opt/spark/app/inputs/employees.csv"
-    CSV_SPORT: str = "/opt/spark/app/inputs/sports.csv"
 
+    # ===== Chemins de stockage =====
     delta_bronze_path: str = "s3a://delta-lake/bronze/activities"
-
     delta_silver_path: str = "s3a://delta-lake/silver"
     delta_silver_activities: str = "s3a://delta-lake/silver/activities"
     delta_silver_employees: str = "s3a://delta-lake/silver/employees"
-
     delta_gold_eligibility: str = "s3a://delta-lake/gold/employee_eligibility"
 
+    # ===== powerbi data clean =====
     powerbi_eligibility: str = "s3a://powerbi/employee_eligibility.parquet"
     powerbi_activities: str = "s3a://powerbi/activities.parquet"
+
+    # ===== Quarantaine (données invalides) =====
+    delta_quarantine_activities: str = "s3a://delta-lake/quarantine/activities"
+    powerbi_quarantine: str = "s3a://powerbi/quarantine_activities.parquet"
     
+    # ===== Checkpoints =====
     checkpoint_bronze: str = "s3a://delta-lake/checkpoints/bronze_activities"
     delta_bronze_console_checkpoint_path: str = "s3a://delta-lake/checkpoints/bronze_console"
-    
+
+    # ===== Données de référence (CSV - Delta) =====
+    delta_reference_data_path: str = "s3a://delta-lake/reference_data"
+    CSV_EMPLOYEES: str = "/opt/spark/app/inputs/employees.csv"
+    CSV_SPORT: str = "/opt/spark/app/inputs/sports.csv"
     delta_input_employees: str = "s3a://delta-lake/inputs/employees.csv"
     delta_input_sports: str = "s3a://delta-lake/inputs/sports.csv"
 

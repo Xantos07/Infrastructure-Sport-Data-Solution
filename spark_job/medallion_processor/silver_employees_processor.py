@@ -6,37 +6,17 @@ from pyspark.sql.functions import (
     col, row_number, desc, current_timestamp, when, lit, count,
     sum as spark_sum, coalesce as spark_coalesce
 )
-from schemas import EMPLOYEES_CSV_SCHEMA, SPORTS_CSV_SCHEMA
-
-# il faut une partie commune de silver puis :
-# - une partie employees
-# - une partie activities
 
 class SilverEmployeesProcessor(BaseSilverProcessor):
     def __init__(self, spark_session, settings):
         super().__init__(spark_session, settings)
 
-    # mettre dans bronze pour creer un delta ABSOLUMENT !
-    def reader_csv(self):
-        csv_options = {"header": "true", "encoding": "UTF-8", "quote": '"', "escape": '"'}
-        
-        df_employees = self.spark.read \
-            .schema(EMPLOYEES_CSV_SCHEMA) \
-            .options(**csv_options) \
-            .csv(self.settings.delta_input_employees)
-        
-        df_sports = self.spark.read \
-            .schema(SPORTS_CSV_SCHEMA) \
-            .options(**csv_options) \
-            .csv(self.settings.delta_input_sports)
-        
-        df_ref = df_employees.join(df_sports, on="ID salarié", how="left")
-        return df_ref
+    def reader(self):
+        return self.spark.read.format("delta").load(self.settings.delta_reference_data_path)
 
-    
     def cleanse(self, df):
         return super().cleanse(df)
-    
+
     def rename_columns(self, df):
         silver_employees = df \
         .withColumnRenamed("id_salarie",          "employee_id") \
@@ -57,10 +37,10 @@ class SilverEmployeesProcessor(BaseSilverProcessor):
 
     def writing(self, df, path):
         super().writing_silver(df, path)
-        
+
     def run(self):
         self.log_step("SILVER - Préparation des données de référence")
-        df_ref = self.reader_csv() # passé a bronze pour creer un delta
+        df_ref = self.reader()
         df_clean = self.cleanse(df_ref)
         df_silver = self.rename_columns(df_clean)
 
