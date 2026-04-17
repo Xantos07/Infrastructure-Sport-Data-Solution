@@ -1,30 +1,145 @@
 name: redpanda-quickstart-one-broker
+
 networks:
   redpanda_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.24.0.0/16
 
 services:
+
+  # ─────────────────────────────────────────────
+  # 1. POSTGRESQL
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16.4
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_wal_senders=10"
+      - "-c"
+      - "max_replication_slots=10"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - redpanda_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+  # ─────────────────────────────────────────────
+  # 2. POSTGRES INIT (schema) — one-shot
+  # ─────────────────────────────────────────────
+  postgres-init:
+    image: postgres:16.4
+    container_name: postgres-init
+    networks:
+      - redpanda_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./structureDb.sql:/sql/structureDb.sql:ro
+    command: |
+      sh -c "
+        echo 'Applying database schema...';
+        psql -h postgres -U ${POSTGRES_USER} -d ${POSTGRES_DB} -v ON_ERROR_STOP=1 -f /sql/structureDb.sql;
+        echo 'Database schema applied.';
+      "
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # 3. MINIO — stockage objet S3-compatible
+  #    Console : http://localhost:9001
+  # ─────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Console web
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_BASE_URL: ${MINIO_BASE_URL}
+    volumes:
+      - minio_data:/data
+    networks:
+      - redpanda_network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf ${MINIO_BASE_URL}/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+  # ─────────────────────────────────────────────
+  # 4. MINIO INIT — crée les buckets au démarrage
+  # ─────────────────────────────────────────────
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    container_name: minio-init
+    networks:
+      - redpanda_network
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local $${MINIO_BASE_URL} $$MINIO_USER $$MINIO_PASSWORD;
+        mc mb --ignore-existing local/delta-lake;
+        mc mb --ignore-existing local/powerbi;
+        echo 'Buckets créés : delta-lake, powerbi';
+      "
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # 5. REDPANDA
+  # ─────────────────────────────────────────────
   redpanda-0:
     command:
       - redpanda
       - start
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
-      # Address the broker advertises to clients that connect to the Kafka API.
-      # Use the internal addresses to connect to the Redpanda brokers'
-      # from inside the same Docker network.
-      # Use the external addresses to connect to the Redpanda brokers'
-      # from outside the Docker network.
       - --advertise-kafka-addr internal://redpanda-0:9092,external://localhost:19092
       - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
-      # Address the broker advertises to clients that connect to the HTTP Proxy.
       - --advertise-pandaproxy-addr internal://redpanda-0:8082,external://localhost:18082
       - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
-      # Redpanda brokers use the RPC API to communicate with each other internally.
       - --rpc-addr redpanda-0:33145
       - --advertise-rpc-addr redpanda-0:33145
-      # Mode dev-container uses well-known configuration properties for development in containers.
       - --mode dev-container
-      # Tells Seastar (the framework Redpanda uses under the hood) to use 1 core on the system.
       - --smp 1
       - --default-log-level=info
     image: docker.redpanda.com/redpandadata/redpanda:v25.1.9
@@ -38,6 +153,22 @@ services:
       - 18082:18082
       - 19092:19092
       - 19644:9644
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────
+  # 6. REDPANDA CONSOLE
+  # ─────────────────────────────────────────────
   console:
     container_name: redpanda-console
     image: docker.redpanda.com/redpandadata/console:v3.1.3
@@ -60,9 +191,20 @@ services:
     ports:
       - 8080:8080
     depends_on:
-      - redpanda-0
+      redpanda-0:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  # ─────────────────────────────────────────────
+  # 7. DEBEZIUM CONNECT
+  # ─────────────────────────────────────────────
   debezium-connector:
-    image: debezium/connect:2.1
+    image: debezium/connect:2.7.3.Final
     container_name: debezium-connector
     environment:
       BOOTSTRAP_SERVERS: redpanda-0:9092
@@ -70,6 +212,11 @@ services:
       CONFIG_STORAGE_TOPIC: my_connect_configs
       OFFSET_STORAGE_TOPIC: my_connect_offsets
       STATUS_STORAGE_TOPIC: my_connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_PARTITIONS: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_PARTITIONS: "1"
       KEY_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
@@ -80,40 +227,333 @@ services:
     networks:
       - redpanda_network
     depends_on:
-      - redpanda-0
-  postgres:
-    image: postgres:latest
-    container_name: postgres
+      postgres-init:
+        condition: service_completed_successfully
+      redpanda-0:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+  # ─────────────────────────────────────────────
+  # 8. DEBEZIUM INIT — one-shot, enregistre le connecteur
+  # ─────────────────────────────────────────────
+  debezium-init:
+    image: curlimages/curl:8.11.1
+    container_name: debezium-init
+    networks:
+      - redpanda_network
+    depends_on:
+      debezium-connector:
+        condition: service_healthy
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: mydatabase
-    command:
-    - "postgres"
-    - "-c"
-    - "wal_level=logical"
-    - "-c"
-    - "max_wal_senders=10"
-    - "-c"
-    - "max_replication_slots=10"
-    ports:
-      - "5432:5432"
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DEBEZIUM_SNAPSHOT_MODE: ${DEBEZIUM_SNAPSHOT_MODE:-always}
+      DEBEZIUM_TABLE_INCLUDE_LIST: ${DEBEZIUM_TABLE_INCLUDE_LIST:-public.activities}
+      TICKER_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - ./config/debezium.json:/config/connector.json:ro
+    command: |
+      sh -c "
+        set -eu;
+
+        escape_sed() {
+          printf '%s' \"$$1\" | sed -e 's/[\\/&]/\\\\&/g'
+        };
+
+        DB_HOST_ESCAPED=$$(escape_sed \"$$POSTGRES_HOST\");
+        DB_PORT_ESCAPED=$$(escape_sed \"$$POSTGRES_PORT\");
+        DB_USER_ESCAPED=$$(escape_sed \"$$POSTGRES_USER\");
+        DB_PASSWORD_ESCAPED=$$(escape_sed \"$$POSTGRES_PASSWORD\");
+        DB_NAME_ESCAPED=$$(escape_sed \"$$POSTGRES_DB\");
+        SNAPSHOT_MODE_ESCAPED=$$(escape_sed \"$$DEBEZIUM_SNAPSHOT_MODE\");
+        TABLE_LIST_ESCAPED=$$(escape_sed \"$$DEBEZIUM_TABLE_INCLUDE_LIST\");
+
+        sed -e \"s/__POSTGRES_HOST__/$$DB_HOST_ESCAPED/g\" -e \"s/__POSTGRES_PORT__/$$DB_PORT_ESCAPED/g\" -e \"s/__POSTGRES_USER__/$$DB_USER_ESCAPED/g\" -e \"s/__POSTGRES_PASSWORD__/$$DB_PASSWORD_ESCAPED/g\" -e \"s/__POSTGRES_DB__/$$DB_NAME_ESCAPED/g\" -e \"s/__DEBEZIUM_SNAPSHOT_MODE__/$$SNAPSHOT_MODE_ESCAPED/g\" -e \"s/__DEBEZIUM_TABLE_INCLUDE_LIST__/$$TABLE_LIST_ESCAPED/g\" /config/connector.json > /tmp/connector.resolved.json;
+
+        echo 'Checking if connector already exists...';
+        STATUS=$$(curl -s -o /dev/null -w '%{http_code}' http://debezium-connector:8083/connectors/postgresql-connector);
+        if [ \"$$STATUS\" = '200' ]; then
+          echo 'Connector already registered, skipping.';
+        else
+          echo 'Registering Debezium connector...';
+          curl -fsS -X POST http://debezium-connector:8083/connectors -H 'Content-Type: application/json' -d @/tmp/connector.resolved.json;
+          echo 'Connector registered successfully.';
+        fi;
+
+        echo 'Applying topic retention...';
+        RESPONSE=$$(curl -s -w '\n%{http_code}' -X PATCH http://redpanda-0:9644/v1/topics/${TICKER_TOPIC:-topic_activities.public.activities}/configs -H 'Content-Type: application/json' -d '{\"retention.ms\":\"86400000\",\"retention.bytes\":\"104857600\"}');
+        echo \"Retention response: $$RESPONSE\";
+        echo 'Done.';
+      "
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # 9. CONSUMER DISCORD
+  # ─────────────────────────────────────────────
+  discord-consumer:
+    build:
+      context: .
+      dockerfile: discord_consumer/Dockerfile
+    container_name: discord-consumer
     networks:
       - redpanda_network
-    
-  pgadmin:
-    image: dpage/pgadmin4
-    container_name: pgadmin
+    depends_on:
+      redpanda-0:
+        condition: service_healthy
+      debezium-init:
+        condition: service_completed_successfully
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "8081:80"
+      BOOTSTRAP_SERVERS: redpanda-0:9092
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
+      DISCORD_INTERVAL: ${DISCORD_INTERVAL:-300}
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
+  # ─────────────────────────────────────────────
+  # 10. SPARK MASTER
+  # ─────────────────────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
     networks:
       - redpanda_network
+    user: root
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    ports:
+      - '7077:7077'
+      - '9090:8080'
+    volumes:
+      - spark_master_data:/opt/spark/work
+      - ./inputs:/opt/spark/inputs:ro
+      - ./monitoring/spark-metrics.properties:/opt/spark/conf/metrics.properties:ro
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      redpanda-0:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────
+  # 11. SPARK WORKER
+  # ─────────────────────────────────────────────
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    networks:
+      - redpanda_network
+    user: root
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    ports:
+      - '9091:8081'
+    volumes:
+      - spark_worker_data:/opt/spark/work
+      - ./monitoring/spark-metrics.properties:/opt/spark/conf/metrics.properties:ro
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2500m
+          cpus: '2.0'
+
+  # ─────────────────────────────────────────────
+  # 12. SPARK BRONZE — ingestion Kafka → Delta Lake (MinIO)
+  # ─────────────────────────────────────────────
+  spark-consumer:
+    build:
+      context: .
+      dockerfile: spark_job/Dockerfile
+    container_name: spark-consumer
+    networks:
+      - redpanda_network
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+      debezium-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+      BOOTSTRAP_SERVERS: redpanda-0:9092
+      KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
+      DELTA_PATH: s3a://delta-lake
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_ENDPOINT: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+    ports:
+      - '4040:4040'   # Spark UI Bronze driver — métriques Prometheus /metrics/prometheus/
+    volumes:
+      - ./inputs:/opt/spark/app/inputs:ro
+      - ./monitoring/spark-metrics.properties:/opt/spark/conf/metrics.properties:ro
+    entrypoint: ["/opt/spark/app/entrypoint_bronze.sh"]
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+        delay: 10s
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────
+  # 13. SPARK SILVER/GOLD — pipeline Medallion (MinIO)
+  # ─────────────────────────────────────────────
+  spark-submit-job:
+    build:
+      context: .
+      dockerfile: spark_job/Dockerfile
+    container_name: spark-submit-job
+    networks:
+      - redpanda_network
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+      debezium-init:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+      BOOTSTRAP_SERVERS: redpanda-0:9092
+      KAFKA_TOPIC: ${TICKER_TOPIC:-topic_activities.public.activities}
+      DELTA_PATH: s3a://delta-lake
+      POWERBI_PATH: s3a://powerbi
+      MINIO_BASE_URL: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_ENDPOINT: ${MINIO_BASE_URL:-http://minio:9000}
+      MINIO_USER: ${MINIO_USER:-minioadmin}
+      MINIO_PASSWORD: ${MINIO_PASSWORD:-minioadmin}
+      MEDALLION_MODE: watch
+      MEDALLION_INTERVAL: "120"
+      BRONZE_WAIT_TIMEOUT: "900"
+      BRONZE_WAIT_INTERVAL: "5"
+    ports:
+      - '4041:4041'   # Spark UI Silver/Gold driver — métriques Prometheus /metrics/prometheus/
+    volumes:
+      - ./inputs:/opt/spark/app/inputs:ro
+      - ./monitoring/spark-metrics.properties:/opt/spark/conf/metrics.properties:ro
+    entrypoint: ["/opt/spark/app/entrypoint_silver_gold.sh"]
+    restart: on-failure
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 5
+        delay: 10s
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  # ─────────────────────────────────────────────
+  # 14. PROMETHEUS — collecte des métriques
+  #     UI : http://localhost:9092
+  # ─────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: prometheus
+    networks:
+      - redpanda_network
+    ports:
+      - "9092:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+    depends_on:
+      redpanda-0:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '0.5'
+
+  # ─────────────────────────────────────────────
+  # 15. GRAFANA — dashboards de visualisation
+  #     UI : http://localhost:3000  (admin / admin)
+  # ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    networks:
+      - redpanda_network
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.25'
+
 volumes:
   postgres_data: {}
   redpanda-0: null
-
+  spark_master_data: {}
+  spark_worker_data: {}
+  minio_data: {}
+  prometheus_data: {}
+  grafana_data: {}

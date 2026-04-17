@@ -1,0 +1,543 @@
+{
+  "title": "Medallion Pipeline — Bronze / Silver / Gold",
+  "uid": "medallion-pipeline",
+  "tags": ["spark", "bronze", "silver", "gold", "streaming", "delta"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Jobs Spark actifs",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "green", "value": 2 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_master_activeApps_Value",
+          "legendFormat": "Jobs actifs",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 2,
+      "title": "Bronze driver UP",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } }, "type": "value" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up{job=\"spark-bronze\"}",
+          "legendFormat": "Bronze",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 3,
+      "title": "Silver/Gold driver UP",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "options": { "0": { "text": "DOWN" }, "1": { "text": "UP" } }, "type": "value" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "up{job=\"spark-silver-gold\"}",
+          "legendFormat": "Silver/Gold",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 4,
+      "title": "Worker — Cores utilisés / libres",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 5, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_coresUsed_Value",
+          "legendFormat": "Cores utilisés",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_coresFree_Value",
+          "legendFormat": "Cores libres",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 5,
+      "title": "Worker — Mémoire utilisée",
+      "type": "gauge",
+      "gridPos": { "x": 17, "y": 0, "w": 7, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "min": 0,
+          "max": 2560,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1800 },
+              { "color": "red", "value": 2300 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "metrics_worker_memUsed_MB_Value",
+          "legendFormat": "Mémoire MB",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "title": "── BRONZE — Ingestion Kafka → Delta Lake ─────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 6,
+      "title": "Bronze — Lignes traitées / seconde (streaming)",
+      "type": "timeseries",
+      "description": "Débit d'ingestion Kafka → Bronze Delta Lake. Pic à l'arrivée des 500 tickets.",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 7 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps",
+          "custom": { "lineWidth": 2, "fillOpacity": 15 },
+          "color": { "fixedColor": "#FF6B35", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_inputRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes entrantes / s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_processingRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes traitées / s",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 7,
+      "title": "Bronze — Durée des micro-batches (30s trigger)",
+      "type": "timeseries",
+      "description": "Durée de chaque micro-batch. Doit rester inférieure à 30s (trigger interval).",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 7 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "drawStyle": "bars"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20000 },
+              { "color": "red", "value": 30000 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_latency_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Latence batch (ms)",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "Bronze — Débit ingestion (rows/s)",
+      "type": "timeseries",
+      "description": "Lignes entrantes vs traitées par le stream Bronze. Quand inputRate = processingRate et que les deux tombent à 0, tout a été ingéré.",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "rps",
+          "custom": { "lineWidth": 2, "fillOpacity": 8 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_inputRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes entrantes / s",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_processingRate_total_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Lignes traitées / s",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_spark_streaming_.*_numInputRows_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Rows par batch",
+          "refId": "C"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "title": "Bronze — JVM Heap (driver)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_jvm_heap_used_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Heap utilisé",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_jvm_heap_max_Value\", job=\"spark-bronze\"})",
+          "legendFormat": "Heap max",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "title": "── SILVER / GOLD — Medallion Processor ──────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 13,
+      "title": "Silver/Gold — Tasks complétées / actives",
+      "type": "timeseries",
+      "description": "Tâches Spark exécutées par le Medallion Processor. Un pic à chaque cycle Bronze→Silver→Gold (toutes les 2 min).",
+      "gridPos": { "x": 0, "y": 19, "w": 12, "h": 7 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 12 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_completedTasks{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Tasks complétées (cumul)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_activeTasks{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Tasks actives",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 14,
+      "title": "Silver/Gold — Bytes lus / écrits dans MinIO",
+      "type": "timeseries",
+      "description": "I/O MinIO (s3a) du Medallion Processor. totalInputBytes = lecture Delta Bronze. totalShuffleWrite = données brassées pour MERGE Gold.",
+      "gridPos": { "x": 12, "y": 19, "w": 12, "h": 7 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 8 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_totalInputBytes_bytes_total{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Bytes lus (cumul)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_totalShuffleWrite_bytes_total{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Shuffle écrits (cumul)",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 15,
+      "title": "Silver/Gold — JVM Heap (driver)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 6 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_jvm_heap_used_Value\", job=\"spark-silver-gold\"})",
+          "legendFormat": "Heap utilisé",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum({__name__=~\"metrics_.*_driver_jvm_heap_max_Value\", job=\"spark-silver-gold\"})",
+          "legendFormat": "Heap max",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 16,
+      "title": "Silver/Gold — Tasks actives (executor)",
+      "type": "timeseries",
+      "description": "Nombre de tasks en cours d'exécution. Activité pendant les cycles Silver et Gold.",
+      "gridPos": { "x": 12, "y": 26, "w": 12, "h": 6 },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "drawStyle": "bars"
+          },
+          "color": { "fixedColor": "#8AB8FF", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_activeTasks{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Tasks actives",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "sum(metrics_executor_completedTasks{job=\"spark-silver-gold-exec\"})",
+          "legendFormat": "Tasks complétées (cumul)",
+          "refId": "B"
+        }
+      ]
+    },
+
+    {
+      "id": 30,
+      "title": "── GC & PERFORMANCE ──────────────────────────────────",
+      "type": "text",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 1 },
+      "options": { "mode": "markdown", "content": "" },
+      "transparent": true
+    },
+
+    {
+      "id": 17,
+      "title": "Bronze — Garbage Collection (ms / min)",
+      "type": "timeseries",
+      "description": "Temps passé en GC par le driver Bronze. Un GC élevé indique une pression mémoire.",
+      "gridPos": { "x": 0, "y": 33, "w": 12, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "fixedColor": "orange", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "increase((sum({__name__=~\"metrics_.*_driver_jvm_.*_time_Value\", job=\"spark-bronze\"}))[1m])",
+          "legendFormat": "GC time Bronze (ms / 1min)",
+          "refId": "A"
+        }
+      ]
+    },
+
+    {
+      "id": 18,
+      "title": "Silver/Gold — Garbage Collection (ms / min)",
+      "type": "timeseries",
+      "description": "Temps passé en GC par le driver Silver/Gold. Pics attendus pendant les MERGE Delta Lake.",
+      "gridPos": { "x": 12, "y": 33, "w": 12, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "color": { "fixedColor": "orange", "mode": "fixed" }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus" },
+          "expr": "increase((sum({__name__=~\"metrics_.*_driver_jvm_.*_time_Value\", job=\"spark-silver-gold\"}))[1m])",
+          "legendFormat": "GC time Silver/Gold (ms / 1min)",
+          "refId": "A"
+        }
+      ]
+    }
+
+  ]
+}

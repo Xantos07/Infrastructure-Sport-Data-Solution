@@ -1,7 +1,15 @@
 .env
+.env.local
 *__pycache__/
 *.pyc
 .vscode/
-database.ini
+/venv/
+
 debezium.json
 *.pdf
+.secrets
+.githooks
+note.md
+
+powerbi_data/
+*.pbix

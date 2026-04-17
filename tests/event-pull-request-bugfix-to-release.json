@@ -1,0 +1,17 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "base": {
+      "ref": "release/1.0.0",
+      "sha": "abc123release456"
+    },
+    "head": {
+      "ref": "bugfix/fix-critical-bug",
+      "sha": "bug789fix012"
+    },
+    "user": {
+      "login": "Xantos07"
+    },
+    "title": "Fix: Correction critique pour la release 1.0.0"
+  }
+}

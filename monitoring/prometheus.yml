@@ -1,0 +1,57 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  # Redpanda — métriques internes (RPC bytes, latence, partitions)
+  - job_name: redpanda
+    static_configs:
+      - targets: ['redpanda-0:9644']
+    metrics_path: /metrics
+
+  # Redpanda — métriques publiques stables (consumer lag, request throughput)
+  - job_name: redpanda-public
+    static_configs:
+      - targets: ['redpanda-0:9644']
+    metrics_path: /public_metrics
+
+  # Spark Master — métriques cluster (workers enregistrés, jobs actifs)
+  # Nécessite spark.ui.prometheus.enabled=true dans la config Spark
+  - job_name: spark-master
+    static_configs:
+      - targets: ['spark-master:8080']
+    metrics_path: /metrics/prometheus/
+
+  # Spark Worker
+  - job_name: spark-worker
+    static_configs:
+      - targets: ['spark-worker:8081']
+    metrics_path: /metrics/prometheus/
+
+  # Spark Bronze — driver Structured Streaming (client mode, port 4040)
+  # Expose : rows/s, batch duration, streaming query progress
+  - job_name: spark-bronze
+    static_configs:
+      - targets: ['spark-consumer:4040']
+    metrics_path: /metrics/prometheus/
+
+  # Spark Silver/Gold — driver Medallion processor (client mode, port 4041)
+  # Expose : JVM heap, streaming metrics, GC via MetricsSystem
+  - job_name: spark-silver-gold
+    static_configs:
+      - targets: ['spark-submit-job:4041']
+    metrics_path: /metrics/prometheus/
+
+  # Spark Bronze — executor metrics (activeTasks, completedTasks, totalInputBytes...)
+  # Endpoint distinct exposé par spark.ui.prometheus.enabled=true
+  - job_name: spark-bronze-exec
+    static_configs:
+      - targets: ['spark-consumer:4040']
+    metrics_path: /metrics/executors/prometheus/
+
+  # Spark Silver/Gold — executor metrics (activeTasks, completedTasks, totalInputBytes...)
+  - job_name: spark-silver-gold-exec
+    static_configs:
+      - targets: ['spark-submit-job:4041']
+    metrics_path: /metrics/executors/prometheus/

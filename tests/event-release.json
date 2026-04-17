@@ -1,0 +1,13 @@
+{
+  "release": {
+    "tag_name": "v0.2.0",
+    "name": "Test de release local",
+    "html_url": "https://github.com/Xantos07/chatbot-puls-events/releases/tag/v0.2.0",
+    "author": {
+      "login": "Xantos07"
+    }
+  },
+  "repository": {
+    "full_name": "Xantos07/chatbot-puls-events"
+  }
+}

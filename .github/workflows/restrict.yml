@@ -1,0 +1,82 @@
+name: Branch Protection & PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR rules
+        run: |
+          BASE="${{ github.event.pull_request.base.ref }}"
+          HEAD="${{ github.event.pull_request.head.ref }}"
+          AUTHOR="${{ github.event.pull_request.user.login }}"
+          
+          echo "📋 PR: $HEAD => $BASE par $AUTHOR"
+          HEAD=$(echo "$HEAD" | tr '[:upper:]' '[:lower:]')
+          
+          # Validation du format de branche (avec exceptions pour development/develop)
+          if ! [[ "$HEAD" =~ ^(feature|bugfix|hotfix|release|dev|test|chore|docs|refactor)/[a-zA-Z0-9._-]+$ ]] && [[ "$HEAD" != "development" ]] && [[ "$HEAD" != "develop" ]]; then
+            echo "::error::❌ Nom invalide: $HEAD. Format: type/description (ex: feature/add-auth)"
+            exit 1
+          fi
+          echo "✅ Nom de branche valide"
+          
+          # Règles de merge vers main
+          if [[ "$BASE" == "main" ]] && ! [[ "$HEAD" =~ ^(release|hotfix)/.+ ]]; then
+            echo "::error::❌ Seuls release/* et hotfix/* peuvent merger vers main"
+            exit 1
+          fi
+          
+          # Règles de merge vers development
+          if [[ "$BASE" =~ ^(development|develop)$ ]] && ! [[ "$HEAD" =~ ^(feature|bugfix|dev|test|chore|docs|refactor)/.+ ]]; then
+            echo "::error::❌ Seuls feature/*, bugfix/*, dev/* peuvent merger vers development"
+            exit 1
+          fi
+          
+          # Règles de merge vers release
+          if [[ "$BASE" =~ ^release/.+ ]] && ! [[ "$HEAD" =~ ^bugfix/.+ ]] && [[ "$HEAD" != "development" ]] && [[ "$HEAD" != "develop" ]]; then
+            echo "::error::❌ Seuls bugfix/*, development et develop peuvent merger vers release/*"
+            exit 1
+          fi
+          
+          echo "✅ Règles de merge respectées"
+
+      - name: Validate commit messages
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          
+          if ! git rev-parse --verify "$HEAD_SHA" >/dev/null 2>&1 || ! git rev-parse --verify "$BASE_SHA" >/dev/null 2>&1; then
+            echo "⚠️ Validation des commits ignorée (environnement de test)"
+            exit 0
+          fi
+          
+          invalid=0
+          while IFS= read -r msg; do
+            # Ignorer les commits de merge GitHub
+            if [[ "$msg" =~ ^Merge\ pull\ request ]]; then
+              echo "ℹ️ Merge commit ignoré: $msg"
+              continue
+            fi
+            
+            if [[ "$msg" =~ ^(init|feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?:.+ ]]; then
+              echo "✅ $msg"
+            else
+              echo "::warning::⚠️ Non conventionnel: $msg"
+              ((invalid++))
+            fi
+          done <<< "$(git log --format=%s $BASE_SHA..$HEAD_SHA)"
+          
+          if [ "$invalid" -gt 0 ]; then
+            echo "::warning::⚠️ $invalid commit(s) non conventionnels. Format: type(scope): description"
+          fi
+          
+          exit 0
