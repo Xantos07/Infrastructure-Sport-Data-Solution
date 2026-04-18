@@ -9,6 +9,8 @@ Modifier une règle ou un seuil ici le propage automatiquement partout.
 Les tests détectent immédiatement toute incohérence.
 """
 
+from __future__ import annotations
+
 from medallion_processor.gold_processor import SPORT_TRANSPORT_MODES, MIN_ACTIVITIES_WELLNESS
 
 
