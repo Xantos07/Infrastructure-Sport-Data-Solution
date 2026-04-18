@@ -19,6 +19,8 @@ La colonne rejection_reason liste toutes les règles violées (concat_ws ignore 
 Chaque record peut violer plusieurs règles simultanément.
 """
 
+from __future__ import annotations
+
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import col, when, lit, concat_ws, current_timestamp
 from delta.tables import DeltaTable
@@ -29,33 +31,29 @@ from services.business_rules import DISTANCE_LIMITS_BY_SPORT
 
 
 def _outlier_label(sport_key: str) -> str:
-    """Génère un label unique à partir de la clé sport (ex: 'Marche/running' → 'distance_outlier_marche')."""
     return "distance_outlier_" + sport_key.split("/")[0].lower().replace(" ", "_")
 
 
-# ── Règles : (label_lisible, condition_d_invalidité) ─────────────────────────
-# Règles structurelles codées ici ; règles outlier générées depuis
-# DISTANCE_LIMITS_BY_SPORT (business_rules.py) pour rester synchronisées.
-_STRUCTURAL_RULES: list[tuple[str, object]] = [
-    ("id_null",              col("id").isNull()),
-    ("employee_id_null",     col("employee_id").isNull()),
-    ("sport_type_null",      col("sport_type").isNull() | (col("sport_type") == "")),
-    ("elapsed_time_invalid", col("elapsed_time").isNull() | (col("elapsed_time") <= 0)),
-    ("start_datetime_null",  col("start_datetime").isNull()),
-    ("distance_negative",    col("distance").isNotNull() & (col("distance") < 0)),
-]
+def _build_validation_rules():
+    structural = [
+        ("id_null",              col("id").isNull()),
+        ("employee_id_null",     col("employee_id").isNull()),
+        ("sport_type_null",      col("sport_type").isNull() | (col("sport_type") == "")),
+        ("elapsed_time_invalid", col("elapsed_time").isNull() | (col("elapsed_time") <= 0)),
+        ("start_datetime_null",  col("start_datetime").isNull()),
+        ("distance_negative",    col("distance").isNotNull() & (col("distance") < 0)),
+    ]
+    outliers = [
+        (
+            _outlier_label(sport_key),
+            col("distance").isNotNull()
+            & (col("distance") > max_dist)
+            & col("sport_type").contains(sport_key),
+        )
+        for sport_key, max_dist in DISTANCE_LIMITS_BY_SPORT.items()
+    ]
+    return structural + outliers
 
-_OUTLIER_RULES: list[tuple[str, object]] = [
-    (
-        _outlier_label(sport_key),
-        col("distance").isNotNull()
-        & (col("distance") > max_dist)
-        & col("sport_type").contains(sport_key),
-    )
-    for sport_key, max_dist in DISTANCE_LIMITS_BY_SPORT.items()
-]
-
-VALIDATION_RULES: list[tuple[str, object]] = _STRUCTURAL_RULES + _OUTLIER_RULES
 
 class DataQualityProcessor(MedallionLayer):
     """Valide les données Bronze et produit un flux clean + un flux quarantaine."""
@@ -79,7 +77,7 @@ class DataQualityProcessor(MedallionLayer):
         """
         rejection_reason = concat_ws(
             ", ",
-            *[when(condition, lit(name)) for name, condition in VALIDATION_RULES],
+            *[when(condition, lit(name)) for name, condition in _build_validation_rules()],
         )
 
         df_tagged = df.withColumn("rejection_reason", rejection_reason)
